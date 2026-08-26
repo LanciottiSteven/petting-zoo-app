@@ -258,9 +258,14 @@ with tabs[0]:
                                                          help="Drafted by another team"),
                 "Mine": st.column_config.CheckboxColumn("Mine", width="small",
                                                         help="I drafted this player"),
-                "Proj": st.column_config.NumberColumn(format="%.1f"),
-                "VOR": st.column_config.NumberColumn(format="%.1f"),
-                "ADP": st.column_config.NumberColumn(format="%.1f"),
+                "Player": st.column_config.TextColumn("Player", width="medium"),
+                "Pos": st.column_config.TextColumn("Pos", width="small"),
+                "Tier": st.column_config.NumberColumn("Tier", width="small"),
+                "Proj": st.column_config.NumberColumn(format="%.1f", width="small"),
+                "VOR": st.column_config.NumberColumn(format="%.1f", width="small"),
+                "ADP": st.column_config.NumberColumn(format="%.1f", width="small"),
+                "Bye": st.column_config.NumberColumn("Bye", width="small"),
+                "Flag": st.column_config.TextColumn("Flag", width="small"),
             },
             disabled=["Player", "Pos", "Tier", "Proj", "VOR", "ADP", "Bye", "Flag"])
 

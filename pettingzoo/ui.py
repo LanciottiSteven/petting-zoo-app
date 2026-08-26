@@ -22,7 +22,7 @@ CSS = """
 :root{
   --plane:#1e242e; --card:#2e3743; --inset:#3a4553; --hover:#39434f;
   --line:#46515f; --line-soft:#3b4552;
-  --ink:#eef2f7; --ink-2:#a8b6c6; --ink-3:#8695a6;
+  --ink:#eef2f7; --ink-2:#b4c1d0; --ink-3:#9fadbe;
   --accent:#5aa2ff; --good:#4bd66b; --warn:#f5bb2e; --bad:#ff7b78;
   --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
   --r:12px;
@@ -117,8 +117,47 @@ table.pz tr.me:hover td{background:rgba(90,162,255,.21)!important}
 .pz-brand img{width:88%;max-width:210px;height:auto;
   filter:drop-shadow(0 3px 10px rgba(0,0,0,.45))}
 
+/* NEVER put overflow:hidden here. The board is a canvas grid that scrolls
+   itself; clipping it lops off the right-hand columns (Flag was cut off). */
 div[data-testid="stDataFrame"],div[data-testid="stDataEditor"]{
-  border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  border:1px solid var(--line);border-radius:10px}
+
+/* Streamlit paints its own widgets from config.toml. That file is easy to lose
+   (a `cp *` skips dot-directories), and when it is missing the stock red
+   #FF4B4B shows up on toggles and sliders while everything else stays blue.
+   Force the accent here so the app themes itself regardless. */
+[data-testid="stCheckbox"] label[data-selected="true"] > div:not([data-testid]){
+  background:var(--accent)!important}
+/* active tab: label text and the underline indicator */
+[data-testid="stTab"][data-selected="true"],
+[data-testid="stTab"][data-selected="true"] *{color:var(--accent)!important}
+/* Scope the indicator to the TAB, not the tab strip. `[data-testid="stTabs"]
+   div[data-rac]` matched half the page and painted the content area blue. */
+[data-testid="stTab"] > div[data-rac]{background:var(--accent)!important}
+/* slider thumb + the readout above it */
+[data-testid="stSlider"] div[data-rac][style*="position: absolute"]{
+  background:var(--accent)!important}
+[data-testid="stSliderThumbValue"]{color:var(--accent)!important}
+[data-testid="stRadioOption"] [data-selected="true"] > div,
+[data-testid="stRadioOption"] input:checked + div{background:var(--accent)!important}
+[data-testid="stBaseButton-primaryFormSubmit"]{
+  background:var(--accent)!important;border-color:var(--accent)!important;
+  color:#0b1b2e!important}
+[data-testid="stSlider"] [data-testid="stThumbValue"]{color:var(--accent)!important}
+/* The slider's filled track is deliberately left alone. Its gradient comes
+   from an emotion class with value-dependent stops, so it cannot be restated
+   in CSS, hue-rotate() lands on the wrong colour (browsers filter in a
+   different colour space than the spec matrix), and forcing a flat background
+   turns a hairline track into a block — and that rule would apply even when
+   config.toml IS present, breaking the good case to patch the bad one.
+   config.toml paints it correctly; ship that file. */
+progress::-webkit-progress-value,[role="progressbar"]>div{background:var(--accent)!important}
+
+/* widget labels and placeholders were the hardest text to read */
+[data-testid="stWidgetLabel"],[data-testid="stWidgetLabel"] p{
+  color:var(--ink-2)!important;font-size:12.5px}
+input::placeholder,textarea::placeholder{color:var(--ink-3)!important;opacity:1}
+[data-baseweb="select"] [aria-hidden="true"]{color:var(--ink-2)!important}
 div[data-baseweb="select"]>div,div[data-baseweb="input"]>div,
 .stTextInput input,.stNumberInput input{
   background:var(--inset)!important;border-color:var(--line)!important;
