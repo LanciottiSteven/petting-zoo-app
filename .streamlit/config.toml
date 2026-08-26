@@ -3,10 +3,10 @@
 # board stops matching the cards around it.
 [theme]
 base = "dark"
-primaryColor = "#4c9aff"
-backgroundColor = "#06080a"
-secondaryBackgroundColor = "#1e2530"
-textColor = "#e9eef4"
+primaryColor = "#5aa2ff"
+backgroundColor = "#1e242e"
+secondaryBackgroundColor = "#2e3743"
+textColor = "#eef2f7"
 
 [server]
 maxUploadSize = 5
