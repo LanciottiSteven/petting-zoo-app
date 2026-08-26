@@ -5,3 +5,6 @@ data/*
 # ...except the variance model: 1.5KB, but rebuilding it needs 32MB of
 # historical game logs. Committing it makes a cold boot fast.
 !data/variance_model.json
+
+# the league badge ships with the app
+!pettingzoo/web/assets/

@@ -43,6 +43,30 @@ DIVISIONS = {
 }
 TEAM_NAMES = DIVISIONS["EAST"] + DIVISIONS["WEST"]
 
+# Numbers printed on the jerseys in the league logo. They run 1-10 with no gaps
+# and cover every team exactly once, which is what a draft order looks like --
+# but they could equally be decorative. NOT wired into the draft or the season
+# simulation until confirmed; see USE_LOGO_AS_DRAFT_ORDER below.
+LOGO_NUMBERS = {
+    "How's the wife?": 1,
+    "Cool Trainer Kai": 2,
+    "UV Blue Beatdown": 3,
+    "Hidden Village Brady's Goo": 4,
+    "LEGIO X": 5,
+    "Breece's Pieces": 6,
+    "Pallet Town RMPL Four Skin": 7,
+    "The Unrepresented Voter": 8,
+    "The Cahalans": 9,
+    "LM Boblawler": 10,
+}
+# Flip to True once the numbers are confirmed as the draft order; the season
+# simulation will then label each slot with its real manager instead of
+# assigning the other nine names arbitrarily.
+USE_LOGO_AS_DRAFT_ORDER = False
+
+LOGO_PATH = "web/assets/logo.png"
+LOGO_SMALL_PATH = "web/assets/logo-sm.png"
+
 # ---------------------------------------------------------------- scoring
 # ESPN stat-id -> points. Verified by regression against ESPN appliedTotal.
 ESPN_STAT_POINTS = {

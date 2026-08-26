@@ -6,6 +6,9 @@ panels are rendered as HTML through `pettingzoo.ui` so both apps match, while
 anything you interact with stays a real Streamlit widget.
 """
 from __future__ import annotations
+import base64
+from pathlib import Path
+
 import pandas as pd
 import streamlit as st
 
@@ -20,8 +23,18 @@ from pettingzoo.season import build_league, simulate_season
 from pettingzoo.league import (LEAGUE_NAME, MY_TEAM_NAME, N_TEAMS, ROSTER_SIZE,
                                DRAFT_DATE, snake_pick_numbers)
 
+ASSETS = Path(__file__).resolve().parent / "pettingzoo" / "web" / "assets"
+LOGO = ASSETS / "logo.png"
+LOGO_SM = ASSETS / "logo-sm.png"
+
 st.set_page_config(page_title="The Petting Zoo — Draft Assistant",
-                   page_icon="🦁", layout="wide")
+                   page_icon=str(ASSETS / "favicon.png") if
+                   (ASSETS / "favicon.png").exists() else "🦁",
+                   layout="wide")
+
+
+def _b64(path: Path) -> str:
+    return base64.b64encode(path.read_bytes()).decode()
 st.markdown(ui.CSS, unsafe_allow_html=True)
 H = lambda s: st.markdown(s, unsafe_allow_html=True)
 
@@ -50,10 +63,14 @@ names = [p.name for p in ranked]
 
 # ------------------------------------------------------------------ sidebar
 with st.sidebar:
-    H(f'<div style="font-size:17px;font-weight:650;margin-bottom:2px">🦁 {LEAGUE_NAME}</div>'
-      f'<div class="dim" style="font-size:11.5px">{N_TEAMS} teams · full PPR · '
-      f'{ROSTER_SIZE}-man roster</div>'
-      f'<div class="dim" style="font-size:11.5px;margin-bottom:10px">'
+    if LOGO_SM.exists():
+        H(f'<div class="pz-brand"><img src="data:image/png;base64,{_b64(LOGO_SM)}" '
+          f'alt="The Petting Zoo"></div>')
+    else:
+        H(f'<div style="font-size:17px;font-weight:650">🦁 {LEAGUE_NAME}</div>')
+    H(f'<div class="dim" style="font-size:11.5px;text-align:center">'
+      f'{N_TEAMS} teams · full PPR · {ROSTER_SIZE}-man roster</div>'
+      f'<div class="dim" style="font-size:11.5px;margin-bottom:10px;text-align:center">'
       f'Draft {DRAFT_DATE[:10]} · you are <i>{MY_TEAM_NAME}</i></div>')
 
     ss.slot = st.selectbox("Your draft slot", range(1, N_TEAMS + 1),

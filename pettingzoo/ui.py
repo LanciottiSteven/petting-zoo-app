@@ -103,6 +103,13 @@ table.pz tr.me td{background:rgba(76,154,255,.12)!important;
   border-radius:9px;padding:10px 14px;color:var(--warn);font-size:12.5px;margin-top:11px}
 .tag{font-family:var(--mono);font-size:11px;color:var(--ink-3)!important}
 
+/* league badge */
+.pz-brand{display:flex;justify-content:center;margin:0 0 10px}
+.pz-brand img{width:88%;max-width:210px;height:auto;
+  filter:drop-shadow(0 3px 10px rgba(0,0,0,.55))}
+.pz-mark{display:flex;align-items:center;gap:11px}
+.pz-mark img{height:42px;width:auto;filter:drop-shadow(0 2px 6px rgba(0,0,0,.5))}
+
 /* native Streamlit widgets, so the board and inputs sit on the same ladder */
 div[data-testid="stDataFrame"],div[data-testid="stDataEditor"]{
   border:1px solid var(--line);border-radius:10px;overflow:hidden}
