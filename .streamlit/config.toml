@@ -1,6 +1,12 @@
+# Kept in lockstep with the tokens in pettingzoo/ui.py. Streamlit paints its own
+# native widgets (data_editor, inputs, buttons) from these, so if they drift the
+# board stops matching the cards around it.
 [theme]
 base = "dark"
-primaryColor = "#4da3ff"
+primaryColor = "#4c9aff"
+backgroundColor = "#06080a"
+secondaryBackgroundColor = "#1e2530"
+textColor = "#e9eef4"
 
 [server]
 maxUploadSize = 5

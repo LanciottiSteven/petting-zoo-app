@@ -11,74 +11,115 @@ from __future__ import annotations
 
 CSS = """
 <style>
+/*
+  Palette notes — this was validated, not eyeballed:
+  * Surfaces step 1.30 (card over page) and 1.49 (border over card). The old
+    scheme sat at 1.09, which is why everything read as flat mud.
+  * Position hues are a colour-blind-checked set: worst normal-vision dE 16.7
+    (floor 15) and worst CVD dE 7.3. A CVD score in the 6-8 band is only legal
+    with secondary encoding — every pill prints its position as text, so hue
+    never carries identity on its own. The previous blue/violet pair measured
+    dE 9.8 and was genuinely hard to tell apart.
+  * K and D/ST deliberately share one neutral. Both are streaming slots the app
+    tells you not to spend on; giving them colour would over-signal them.
+*/
 :root{
-  --bg:#0e1116; --panel:#161b22; --panel2:#1c2230; --line:#2a3140;
-  --ink:#e6edf3; --dim:#8b98a9; --accent:#4da3ff; --good:#3fb950;
-  --warn:#d29922; --bad:#f85149;
+  --plane:#06080a; --card:#1e2530; --inset:#28313d; --hover:#2b3542;
+  --line:#36414f; --line-soft:#2a3340;
+  --ink:#e9eef4; --ink-2:#9dabbb; --ink-3:#71808f;
+  --accent:#4c9aff; --good:#3fcf60; --warn:#fab219; --bad:#f0605d;
   --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
 }
-.stApp{background:var(--bg)}
+.stApp{background:var(--plane);color:var(--ink)}
 #MainMenu,footer,header[data-testid="stHeader"]{visibility:hidden;height:0}
-.block-container{padding-top:1.2rem;padding-bottom:2rem;max-width:1500px}
-section[data-testid="stSidebar"]{background:var(--panel);border-right:1px solid var(--line)}
+.block-container{padding-top:1.1rem;padding-bottom:2rem;max-width:1560px}
+section[data-testid="stSidebar"]{background:var(--card);border-right:1px solid var(--line)}
 section[data-testid="stSidebar"] .block-container{padding-top:1rem}
+/* Set ink once and let it inherit. A blanket `.stApp span{color:...}` rule
+   (specificity 0,1,1) silently beats every semantic class below it — .flagq,
+   .bad, .dim and the position chips all render as plain ink. Don't reintroduce it. */
+.stApp{color:var(--ink)}
+.stMarkdown,.stMarkdown p{color:var(--ink)}
 
 /* tabs */
-button[data-baseweb="tab"]{color:var(--dim)!important;font-weight:500}
+button[data-baseweb="tab"]{color:var(--ink-2)!important;font-weight:500}
 button[data-baseweb="tab"][aria-selected="true"]{color:var(--accent)!important}
 div[data-baseweb="tab-highlight"]{background:var(--accent)!important}
-div[data-baseweb="tab-border"]{background:var(--line)!important}
+div[data-baseweb="tab-border"]{background:var(--line-soft)!important}
 
 /* cards */
-.pz-card{background:var(--panel);border:1px solid var(--line);border-radius:11px;
-  padding:15px 16px;margin-bottom:15px}
-.pz-card h2{font-size:12px;margin:0 0 12px;text-transform:uppercase;
-  letter-spacing:.8px;color:var(--dim);font-weight:650}
+.pz-card{background:var(--card);border:1px solid var(--line);border-radius:12px;
+  padding:16px 17px;margin-bottom:15px}
+.pz-card h2{font-size:11.5px;margin:0 0 12px;text-transform:uppercase;
+  letter-spacing:.9px;color:var(--ink-2);font-weight:650}
 .pz-stats{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px}
-.pz-stat{flex:1;min-width:150px;background:var(--panel2);border:1px solid var(--line);
-  border-radius:9px;padding:11px 14px}
-.pz-stat .lbl{color:var(--dim);font-size:10.5px;text-transform:uppercase;
-  letter-spacing:.6px;margin-bottom:2px}
-.pz-stat .val{font-size:25px;font-weight:700;font-family:var(--mono);line-height:1.15}
-.pz-stat .sub{color:var(--dim);font-size:11.5px;margin-top:2px}
-.pz-stat.hot{border-color:var(--accent)}
+.pz-stat{flex:1;min-width:158px;background:var(--card);border:1px solid var(--line);
+  border-radius:11px;padding:12px 15px}
+.pz-stat .lbl{color:var(--ink-2);font-size:10.5px;text-transform:uppercase;
+  letter-spacing:.7px;margin-bottom:3px}
+.pz-stat .val{font-size:26px;font-weight:700;font-family:var(--mono);
+  line-height:1.15;color:var(--ink)}
+.pz-stat .sub{color:var(--ink-3);font-size:11.5px;margin-top:3px}
+.pz-stat.hot{border-color:var(--accent);background:linear-gradient(
+  180deg,rgba(76,154,255,.10),rgba(76,154,255,0) 70%),var(--card)}
 .pz-stat.hot .val{color:var(--accent)}
 
 /* tables */
 table.pz{width:100%;border-collapse:collapse;font-size:13px}
-table.pz th{text-align:left;color:var(--dim);font-weight:600;font-size:10.5px;
-  text-transform:uppercase;letter-spacing:.5px;padding:7px 9px;
-  border-bottom:1px solid var(--line);white-space:nowrap}
-table.pz td{padding:7px 9px;border-bottom:1px solid #1e242e;color:var(--ink)}
+table.pz th{text-align:left;color:var(--ink-2);font-weight:600;font-size:10.5px;
+  text-transform:uppercase;letter-spacing:.6px;padding:8px 10px;
+  border-bottom:1px solid var(--line);white-space:nowrap;background:var(--card)}
+table.pz td{padding:8px 10px;border-bottom:1px solid var(--line-soft);color:var(--ink)}
 table.pz tr:last-child td{border-bottom:none}
-table.pz tr:hover td{background:#1a2130}
+table.pz tbody tr:hover td{background:var(--hover)}
 table.pz td.num,table.pz th.num{text-align:right;font-family:var(--mono);
   font-variant-numeric:tabular-nums}
-table.pz tr.me td{background:#12243a!important;box-shadow:inset 3px 0 0 var(--accent)}
-.pz-scroll{max-height:520px;overflow:auto;border-radius:8px}
+table.pz tr.me td{background:rgba(76,154,255,.12)!important;
+  box-shadow:inset 3px 0 0 var(--accent)}
+.pz-scroll{max-height:520px;overflow:auto;border-radius:9px}
 
-/* bits */
-.pill{display:inline-block;padding:1px 7px;border-radius:20px;font-size:10px;
-  font-weight:700;letter-spacing:.3px}
-.QB{background:#3b2a4d;color:#c9a5ee}.RB{background:#123528;color:#5fd8a0}
-.WR{background:#123044;color:#6fbcf5}.TE{background:#3f2f16;color:#e8bb63}
-.K{background:#2a2f38;color:#a9b6c6}.DST{background:#37232a;color:#f08d8d}
-.flag{color:var(--bad);font-weight:650;font-size:10.5px}
-.flagq{color:var(--warn);font-weight:650;font-size:10.5px}
-.good{color:var(--good)}.bad{color:var(--bad)}.dim{color:var(--dim)}
-.bar{height:7px;background:var(--panel2);border-radius:4px;overflow:hidden;min-width:56px}
-.bar>i{display:block;height:100%;background:var(--accent)}
-.pz-hint{color:var(--dim);font-size:11.5px;line-height:1.6;margin-top:9px}
-.pz-why{background:var(--panel2);border:1px solid var(--line);
-  border-left:3px solid var(--accent);border-radius:9px;padding:12px 15px;margin-bottom:14px}
-.pz-why div{margin:5px 0;font-size:13.5px}
-.pz-run{background:#3a2a12;border:1px solid #6b4d13;border-radius:8px;
-  padding:9px 13px;color:#e8bb63;font-size:12.5px;margin-top:10px}
-.tag{font-family:var(--mono);font-size:11px;color:var(--dim)}
+/* position chips — tint derived from each hue so lightness stays even */
+.pill{display:inline-block;padding:1.5px 8px;border-radius:20px;font-size:10.5px;
+  font-weight:700;letter-spacing:.3px;border:1px solid transparent}
+.pill.QB{color:#d17fb8!important;background:#302e3e;border-color:#503e56}
+.pill.RB{color:#3fb87c!important;background:#213438;border-color:#274e45}
+.pill.WR{color:#56b4e9!important;background:#243342;border-color:#2e4d64}
+.pill.TE{color:#e69f00!important;background:#32312b;border-color:#564723}
+.pill.K,.pill.DST{color:#96a2b1!important;background:#2a323d;border-color:#404854}
 
-/* tame the data_editor so the board matches */
+.pz-card .flag,.flag{color:var(--bad)!important;font-weight:650;font-size:10.5px}
+.pz-card .flagq,.flagq{color:var(--warn)!important;font-weight:650;font-size:10.5px}
+.good{color:var(--good)!important}
+.bad{color:var(--bad)!important}
+.dim{color:var(--ink-3)!important}
+.bar{height:7px;background:var(--inset);border-radius:4px;overflow:hidden;min-width:56px}
+.bar>i{display:block;height:100%;background:var(--accent);border-radius:4px}
+.pz-hint{color:var(--ink-3);font-size:11.5px;line-height:1.65;margin-top:10px}
+.pz-hint b{color:var(--ink-2)}
+.pz-why{background:var(--inset);border:1px solid var(--line);
+  border-left:3px solid var(--accent);border-radius:10px;padding:13px 16px;margin-bottom:14px}
+.pz-why div{margin:6px 0;font-size:13.5px;color:var(--ink)}
+.pz-run{background:rgba(250,178,25,.10);border:1px solid rgba(250,178,25,.35);
+  border-radius:9px;padding:10px 14px;color:var(--warn);font-size:12.5px;margin-top:11px}
+.tag{font-family:var(--mono);font-size:11px;color:var(--ink-3)!important}
+
+/* native Streamlit widgets, so the board and inputs sit on the same ladder */
 div[data-testid="stDataFrame"],div[data-testid="stDataEditor"]{
-  border:1px solid var(--line);border-radius:9px}
+  border:1px solid var(--line);border-radius:10px;overflow:hidden}
+div[data-baseweb="select"]>div,div[data-baseweb="input"]>div,
+.stTextInput input,.stNumberInput input{
+  background:var(--inset)!important;border-color:var(--line)!important;
+  color:var(--ink)!important}
+div[data-testid="stExpander"]{background:var(--card);border:1px solid var(--line);
+  border-radius:10px}
+div[data-testid="stExpander"] summary{color:var(--ink-2)!important}
+.stSlider [data-baseweb="slider"] div[role="slider"]{background:var(--accent)!important}
+button[kind="primary"]{background:var(--accent)!important;border-color:var(--accent)!important;
+  color:#06121f!important;font-weight:650}
+button[kind="secondary"]{background:var(--inset)!important;border-color:var(--line)!important;
+  color:var(--ink)!important}
+button[kind="secondary"]:hover{border-color:var(--accent)!important;color:var(--accent)!important}
+hr{border-color:var(--line-soft)!important}
 </style>
 """
 

@@ -4,9 +4,14 @@
 <title>The Petting Zoo — Draft Assistant</title>
 <style>
 :root{
-  --bg:#0e1116; --panel:#161b22; --panel2:#1c2230; --line:#2a3140;
-  --ink:#e6edf3; --dim:#8b98a9; --accent:#4da3ff; --good:#3fb950;
-  --warn:#d29922; --bad:#f85149; --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+  /* Validated palette — see pettingzoo/ui.py for the reasoning. Surfaces step
+     1.30 (card over page); position hues clear the normal-vision dE 15 floor
+     at 16.7 with CVD 7.3, which is legal because every chip is text-labelled. */
+  --bg:#06080a; --panel:#1e2530; --panel2:#28313d; --line:#36414f;
+  --line-soft:#2a3340; --hover:#2b3542;
+  --ink:#e9eef4; --dim:#9dabbb; --muted:#71808f;
+  --accent:#4c9aff; --good:#3fcf60; --warn:#fab219; --bad:#f0605d;
+  --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
 }
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);
@@ -21,7 +26,7 @@ button{background:var(--panel2);color:var(--ink);border:1px solid var(--line);
   border-radius:7px;padding:7px 13px;cursor:pointer;font-size:13px;font-weight:500}
 button:hover:not(:disabled){border-color:var(--accent);color:var(--accent)}
 button:disabled{opacity:.45;cursor:not-allowed}
-button.primary{background:var(--accent);border-color:var(--accent);color:#04121f;font-weight:650}
+button.primary{background:var(--accent);border-color:var(--accent);color:#06121f;font-weight:650}
 button.primary:hover:not(:disabled){opacity:.88;color:#04121f}
 button.danger:hover{border-color:var(--bad);color:var(--bad)}
 select,input{background:var(--panel2);color:var(--ink);border:1px solid var(--line);
@@ -46,24 +51,27 @@ table{width:100%;border-collapse:collapse;font-size:13px}
 th{text-align:left;color:var(--dim);font-weight:600;font-size:11px;
   text-transform:uppercase;letter-spacing:.5px;padding:7px 9px;
   border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--panel);cursor:pointer}
-td{padding:7px 9px;border-bottom:1px solid #1e242e}
-tr:hover td{background:#1a2130}
+td{padding:8px 10px;border-bottom:1px solid var(--line-soft)}
+tr:hover td{background:var(--hover)}
 .num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums}
 .scroll{max-height:560px;overflow:auto;border-radius:8px}
 .pill{display:inline-block;padding:1px 7px;border-radius:20px;font-size:10.5px;
   font-weight:700;letter-spacing:.3px}
-.QB{background:#3b2a4d;color:#c9a5ee}.RB{background:#123528;color:#5fd8a0}
-.WR{background:#123044;color:#6fbcf5}.TE{background:#3f2f16;color:#e8bb63}
-.K{background:#2a2f38;color:#a9b6c6}.DST{background:#37232a;color:#f08d8d}
+.pill{border:1px solid transparent}
+.QB{color:#d17fb8;background:#302e3e;border-color:#503e56}
+.RB{color:#3fb87c;background:#213438;border-color:#274e45}
+.WR{color:#56b4e9;background:#243342;border-color:#2e4d64}
+.TE{color:#e69f00;background:#32312b;border-color:#564723}
+.K,.DST{color:#96a2b1;background:#2a323d;border-color:#404854}
 .flag{color:var(--bad);font-weight:650;font-size:11px}
 .flagq{color:var(--warn);font-weight:650;font-size:11px}
-.good{color:var(--good)}.bad{color:var(--bad)}.dim{color:var(--dim)}
+.good{color:var(--good)}.bad{color:var(--bad)}.dim{color:var(--muted)}
 .big{font-size:26px;font-weight:700;font-family:var(--mono)}
 .stat{background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:12px 14px}
 .stat .lbl{color:var(--dim);font-size:11px;text-transform:uppercase;letter-spacing:.6px}
 .bar{height:7px;background:var(--panel2);border-radius:4px;overflow:hidden;min-width:60px}
 .bar>i{display:block;height:100%;background:var(--accent)}
-.me{background:#12243a !important;box-shadow:inset 3px 0 0 var(--accent)}
+.me{background:rgba(76,154,255,.12) !important;box-shadow:inset 3px 0 0 var(--accent)}
 .tag{font-family:var(--mono);font-size:11px;color:var(--dim)}
 .empty{color:var(--dim);text-align:center;padding:26px;font-style:italic}
 .spin{display:inline-block;width:12px;height:12px;border:2px solid var(--line);
