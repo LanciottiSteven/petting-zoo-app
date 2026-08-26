@@ -74,9 +74,10 @@ table.pz th{text-align:left;color:var(--ink-2);font-weight:650;font-size:10.5px;
   text-transform:uppercase;letter-spacing:.7px;padding:11px 14px;white-space:nowrap;
   background:var(--inset);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:1}
 table.pz td{padding:11px 14px;border-bottom:1px solid var(--line-soft);
-  color:var(--ink);vertical-align:middle}
-/* names and other first-column labels stay on one line */
-table.pz td:first-child{white-space:nowrap}
+  color:var(--ink);vertical-align:middle;white-space:nowrap}
+/* Cells hold one line by default — the table scrolls on x, so wrapping just
+   makes row heights ragged. Opt in with .wrap for prose columns. */
+table.pz td.wrap{white-space:normal;min-width:230px}
 table.pz tbody tr:last-child td{border-bottom:none}
 table.pz tbody tr:nth-child(even) td{background:rgba(255,255,255,.022)}
 table.pz tbody tr:hover td{background:var(--hover)}

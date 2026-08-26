@@ -333,7 +333,7 @@ with tabs[1]:
             mx = max(r["title_odds"] for r in res)
             rows = [([
                 ui.td(f'<b>{r["name"]}</b><div class="dim" style="font-size:11.5px">'
-                      f'{r["blurb"]}</div>'),
+                      f'{r["blurb"]}</div>', "wrap"),
                 ui.td(f'<b>{r["title_odds"] * 100:.1f}%</b>', "num"),
                 ui.td(f'{r["playoff_odds"] * 100:.0f}%', "num"),
                 ui.td(f'{r["exp_wins"]:.2f}', "num"),
@@ -350,7 +350,7 @@ with tabs[1]:
         else:
             rows = [([
                 ui.td(f'<b>{r["name"]}</b><div class="dim" style="font-size:11.5px">'
-                      f'{r["blurb"]}</div>'),
+                      f'{r["blurb"]}</div>', "wrap"),
                 ui.td(f'<b>{r["mean"]:.1f}</b>', "num"),
                 ui.td(f'<span class="dim">{r["p10"]:.0f}–{r["p90"]:.0f}</span>', "num"),
                 ui.td('<span class="good">best</span>' if r["vs_best"] == 0
@@ -460,7 +460,7 @@ with tabs[4]:
         rows = [([ui.td(f'<span class="tag">#{pk}</span>'),
                   ui.td(" · ".join(f'{nm} <span class="dim">'
                                    f'{round(100 * ct / r["n_sims"])}%</span>'
-                                   for nm, ct in opts[:4]))], False)
+                                   for nm, ct in opts[:4]), "wrap")], False)
                 for pk, opts in r["pick_frequency"].items()]
         H(ui.card("Who you end up with, by pick",
                   ui.table([("Pick", 0), ("Most likely selections", 0)], rows)))
