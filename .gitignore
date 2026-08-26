@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+# Cached source data re-downloads on demand and is far too big for git.
+data/*
+# ...except the variance model: 1.5KB, but rebuilding it needs 32MB of
+# historical game logs. Committing it makes a cold boot fast.
+!data/variance_model.json
