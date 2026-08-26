@@ -44,9 +44,9 @@ DIVISIONS = {
 TEAM_NAMES = DIVISIONS["EAST"] + DIVISIONS["WEST"]
 
 # Numbers printed on the jerseys in the league logo. They run 1-10 with no gaps
-# and cover every team exactly once, which is what a draft order looks like --
-# but they could equally be decorative. NOT wired into the draft or the season
-# simulation until confirmed; see USE_LOGO_AS_DRAFT_ORDER below.
+# and cover every team exactly once, so they look like a draft order -- they are
+# NOT. Confirmed decorative by the league owner, 2026-08-26. Kept only as a
+# team-identity reference; never use these as draft slots.
 LOGO_NUMBERS = {
     "How's the wife?": 1,
     "Cool Trainer Kai": 2,
@@ -59,9 +59,8 @@ LOGO_NUMBERS = {
     "The Cahalans": 9,
     "LM Boblawler": 10,
 }
-# Flip to True once the numbers are confirmed as the draft order; the season
-# simulation will then label each slot with its real manager instead of
-# assigning the other nine names arbitrarily.
+# Confirmed decorative -- leave False. The real draft order is set by hand by
+# the league manager and is not published anywhere the app can read.
 USE_LOGO_AS_DRAFT_ORDER = False
 
 LOGO_PATH = "web/assets/logo.png"
