@@ -24,22 +24,25 @@ st.set_page_config(page_title="The Petting Zoo — Draft Assistant",
                    page_icon="🦁", layout="wide")
 
 
-@st.cache_resource(show_spinner="Loading player data…")
-def load(_bust: float = 0.0):
+# ttl matters here: without it this cache would hold the very first pool for
+# the entire life of the process, and the per-source TTLs in sources.py would
+# never get consulted. 30 minutes is cheap (a rebuild reads local files) and it
+# is what lets a long-running hosted app pick up fresh ADP and injury news.
+@st.cache_resource(ttl=1800, show_spinner="Loading player data…")
+def load():
     poolmod.GAMES_MISSED_OVERRIDES = {k: (v[0], v[1])
                                       for k, v in store.get_overrides().items()}
-    pool = build_pool()
+    pool = build_pool()          # re-pulls only the sources past their own TTL
     repl = compute_valuation(pool)
     return pool, repl, waiver_levels(pool)
 
 
 ss = st.session_state
-ss.setdefault("bust", 0.0)
 ss.setdefault("taken", [])
 ss.setdefault("mine", [])
 ss.setdefault("slot", store.get_setting("my_draft_slot") or 1)
 
-pool, repl, waiver = load(ss.bust)
+pool, repl, waiver = load()
 by_name = {p.name: p for p in pool}
 ranked = sorted([p for p in pool if p.proj > 0], key=lambda p: -p.vor)
 names = [p.name for p in ranked]
@@ -64,13 +67,26 @@ with st.sidebar:
                 except Exception as e:
                     errs[nm] = str(e)
         load.clear()
-        ss.bust = time.time()
         st.success("Refreshed.") if not errs else st.warning(f"Some failed: {errs}")
         st.rerun()
 
-    age = sources.cache_age_seconds("espn_players.json")
-    if age is not None:
-        st.caption(f"ESPN data {int(age//60)} min old")
+    status = sources.data_status()
+    stale = [d for d in status if d["stale"]]
+    label = ("all sources fresh" if not stale
+             else f"{len(stale)} source(s) refreshing on next load")
+    with st.expander(f"Data freshness — {label}"):
+        for d in status:
+            nm = d["source"].replace(".json", "").replace(".csv", "")
+            if d["missing"]:
+                st.caption(f"• **{nm}** — not downloaded yet")
+            else:
+                mins = d["age_seconds"] // 60
+                ago = f"{mins} min ago" if mins < 90 else f"{mins//60} h ago"
+                mark = "⟳" if d["stale"] else "✓"
+                st.caption(f"{mark} **{nm}** — {ago} "
+                           f"(refreshes after {d['ttl_seconds']//3600}h)")
+        st.caption("Sources re-pull automatically once past their own limit. "
+                   "Hit Refresh to force everything now.")
 
     st.divider()
     st.caption("**Draft state**")
@@ -248,7 +264,7 @@ with tabs[3]:
         note = c3.text_input("Reason", placeholder="e.g. 2-game suspension")
         if st.form_submit_button("Save", type="primary"):
             store.set_override(nm, int(gm), note) if gm > 0 else store.clear_override(nm)
-            load.clear(); ss.bust = time.time(); st.rerun()
+            load.clear(); st.rerun()
 
 # ----------------------------------------------------------------- draft sim
 with tabs[4]:

@@ -27,9 +27,13 @@ _lock = threading.Lock()
 _state = {"pool": None, "repl": None, "waiver": None, "built_at": 0.0}
 
 
+POOL_TTL = 1800   # rebuild every 30 min so per-source TTLs actually get checked
+
+
 def get_pool(force: bool = False):
     with _lock:
-        if _state["pool"] is None or force:
+        expired = (time.time() - _state["built_at"]) > POOL_TTL
+        if _state["pool"] is None or force or expired:
             poolmod.GAMES_MISSED_OVERRIDES = {
                 k: (v[0], v[1]) for k, v in store.get_overrides().items()}
             p = build_pool(force=force)
@@ -132,6 +136,7 @@ def league_info():
         "waiver_levels": {k: round(v, 1) for k, v in waiver.items()},
         "my_slot": store.get_setting("my_draft_slot"),
         "built_at": _state["built_at"],
+        "data_status": sources.data_status(),
         "positional": [pr.__dict__ for pr in positional_report(p, repl)],
     }
 

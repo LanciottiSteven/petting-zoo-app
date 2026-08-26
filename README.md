@@ -33,7 +33,27 @@ about a minute; after that it starts instantly from cache.
 | nflverse | 2020–2025 game logs, 2026 schedule, Vegas lines | daily |
 | DynastyProcess | player ID crosswalk | daily |
 
-Hit **↻ Refresh data** any time to re-pull everything.
+### Data freshness
+
+Nothing streams live. Each source has a time-to-live and is re-pulled on the
+next load once it expires — no action needed from you.
+
+| Source | Refreshes after | Why |
+|---|---|---|
+| ESPN (ADP, injuries, projections) | 3 h | The only genuinely live inputs |
+| FFC ADP | 12 h | FFC recomputes once a day |
+| Sleeper players | 12 h | 15MB; Sleeper asks for ≤1 pull/day |
+| Sleeper projections | 24 h | Move slowly |
+| Schedule, ID crosswalk | 7 d | Effectively static |
+| Historical game logs | never | Past seasons do not change |
+
+Two caches sit in front of these, and both have a 30-minute TTL so the
+per-source limits above actually get consulted: `@st.cache_resource` in the
+Streamlit app and the in-process pool in the FastAPI app. Without those TTLs a
+long-running app would serve its very first snapshot forever.
+
+Hit **↻ Refresh all data** to force everything immediately — worth doing right
+before the draft starts, and after any injury news breaks.
 
 ## How the modelling works
 

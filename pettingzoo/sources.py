@@ -23,8 +23,47 @@ def _get(url: str, headers: dict | None = None, timeout: int = 60) -> bytes:
         return r.read()
 
 
+# How long each source stays usable before it is re-pulled. These are the
+# only knobs that decide freshness, so they live in one place.
+HOUR = 3600
+TTL = {
+    "espn_players.json":       3 * HOUR,    # ADP + injury status: the live stuff
+    "ffc_adp_ppr_10.json":    12 * HOUR,    # FFC recomputes once a day
+    "sleeper_players.json":   12 * HOUR,    # 15MB; Sleeper asks for <=1 pull/day
+    "sleeper_projections.json": 24 * HOUR,  # projections move slowly
+    "games.csv":           7 * 24 * HOUR,   # schedule is fixed for the season
+    "db_playerids.csv":    7 * 24 * HOUR,   # crosswalk barely changes
+}
+DEFAULT_TTL = 12 * HOUR
+
+
 def _cache_path(name: str) -> Path:
     return DATA_DIR / name
+
+
+def is_stale(name: str) -> bool:
+    """True if this source is missing or past its TTL."""
+    age = cache_age_seconds(name)
+    return age is None or age > TTL.get(name, DEFAULT_TTL)
+
+
+def _use_cache(name: str, force: bool) -> bool:
+    return not force and not is_stale(name)
+
+
+def data_status() -> list[dict]:
+    """Per-source freshness, for display in the UI."""
+    out = []
+    for name, ttl in TTL.items():
+        age = cache_age_seconds(name)
+        out.append({
+            "source": name,
+            "age_seconds": None if age is None else int(age),
+            "ttl_seconds": ttl,
+            "stale": is_stale(name),
+            "missing": age is None,
+        })
+    return out
 
 
 def cache_age_seconds(name: str) -> float | None:
@@ -59,7 +98,7 @@ ESPN_FILTER = {
 
 def fetch_espn(force: bool = False) -> dict:
     name = "espn_players.json"
-    if not force and _cache_path(name).exists():
+    if _use_cache(name, force):
         return json.loads(_cache_path(name).read_bytes())
     blob = _get(ESPN_URL, {"x-fantasy-filter": json.dumps(ESPN_FILTER)})
     _write(name, blob)
@@ -70,8 +109,7 @@ def fetch_espn(force: bool = False) -> dict:
 def fetch_sleeper_players(force: bool = False) -> dict:
     """~15MB. Sleeper asks that this be called at most once per day."""
     name = "sleeper_players.json"
-    age = cache_age_seconds(name)
-    if not force and age is not None and age < 6 * 3600:
+    if _use_cache(name, force):
         return json.loads(_cache_path(name).read_bytes())
     blob = _get("https://api.sleeper.app/v1/players/nfl", timeout=180)
     _write(name, blob)
@@ -81,8 +119,7 @@ def fetch_sleeper_players(force: bool = False) -> dict:
 def fetch_sleeper_projections(force: bool = False) -> list:
     """Season-long projections (Rotowire-sourced) with component stats."""
     name = "sleeper_projections.json"
-    age = cache_age_seconds(name)
-    if not force and age is not None and age < 6 * 3600:
+    if _use_cache(name, force):
         return json.loads(_cache_path(name).read_bytes())
     out = []
     for pos in ("QB", "RB", "WR", "TE", "K"):
@@ -100,8 +137,7 @@ def fetch_sleeper_projections(force: bool = False) -> list:
 # --------------------------------------------------------------- FFC ADP
 def fetch_ffc_adp(fmt: str = "ppr", teams: int = 10, force: bool = False) -> dict:
     name = f"ffc_adp_{fmt}_{teams}.json"
-    age = cache_age_seconds(name)
-    if not force and age is not None and age < 12 * 3600:
+    if _use_cache(name, force):
         return json.loads(_cache_path(name).read_bytes())
     url = (f"https://fantasyfootballcalculator.com/api/v1/adp/{fmt}"
            f"?teams={teams}&year={SEASON}&position=all")
@@ -125,8 +161,7 @@ def fetch_weekly_stats(season: int, force: bool = False) -> list[dict]:
 
 def fetch_schedule(force: bool = False) -> list[dict]:
     name = "games.csv"
-    age = cache_age_seconds(name)
-    if not force and age is not None and age < 24 * 3600:
+    if _use_cache(name, force):
         return list(csv.DictReader(_cache_path(name).read_text().splitlines()))
     blob = _get(f"{NFLVERSE}/schedules/games.csv", timeout=180)
     _write(name, blob)
@@ -135,8 +170,7 @@ def fetch_schedule(force: bool = False) -> list[dict]:
 
 def fetch_playerids(force: bool = False) -> list[dict]:
     name = "db_playerids.csv"
-    age = cache_age_seconds(name)
-    if not force and age is not None and age < 24 * 3600:
+    if _use_cache(name, force):
         return list(csv.DictReader(_cache_path(name).read_text().splitlines()))
     blob = _get("https://raw.githubusercontent.com/dynastyprocess/data/master/"
                 "files/db_playerids.csv", timeout=180)
