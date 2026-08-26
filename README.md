@@ -110,7 +110,8 @@ pettingzoo/
   season.py      14-week season, playoffs, title odds
   store.py       SQLite persistence
   api.py         FastAPI backend
-  web/           single-page frontend
+  ui.py          shared design tokens + HTML table renderers (Streamlit build)
+  web/           single-page frontend (local build)
 ```
 
 ---
@@ -156,6 +157,7 @@ Two ways to run it, sharing one engine:
 | | Local (FastAPI) | Hosted (Streamlit) |
 |---|---|---|
 | Start | `python3 run.py` | `streamlit run streamlit_app.py` |
+| Look | Custom dark UI | Same design, ported via `ui.py` |
 | Speed | Fastest; no reruns | Reruns per interaction |
 | Best for | **Draft night** | Phone, tablet, anywhere |
 
