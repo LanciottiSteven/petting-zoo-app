@@ -8,3 +8,6 @@ data/*
 
 # the league badge ships with the app
 !pettingzoo/web/assets/
+
+# macOS finder junk
+.DS_Store
