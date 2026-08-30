@@ -44,8 +44,9 @@ div[data-baseweb="tab-border"]{background:var(--line-soft)!important}
 
 .pz-card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);
   padding:18px 20px;margin-bottom:16px}
-.pz-card h2{font-size:11.5px;margin:0 0 14px;text-transform:uppercase;
-  letter-spacing:.9px;color:var(--ink-2);font-weight:650}
+.pz-card h2,.pz-h{font-size:11.5px;margin:0 0 14px;text-transform:uppercase;
+  letter-spacing:.9px;color:var(--ink-2);font-weight:650;display:block}
+.pz-h{margin-top:16px}
 .pz-stats{display:flex;gap:13px;flex-wrap:wrap;margin-bottom:16px}
 .pz-stat{flex:1;min-width:162px;background:var(--card);border:1px solid var(--line);
   border-radius:var(--r);padding:14px 17px}
@@ -78,6 +79,12 @@ table.pz td{padding:11px 14px;border-bottom:1px solid var(--line-soft);
 /* Cells hold one line by default — the table scrolls on x, so wrapping just
    makes row heights ragged. Opt in with .wrap for prose columns. */
 table.pz td.wrap{white-space:normal;min-width:230px}
+/* research dossier: let long labels and source names wrap so the value column
+   stays inside its grid track instead of being pushed out and clipped */
+table.pz td.wrap-label{white-space:normal;min-width:0;line-height:1.35}
+/* the source caption sits inside a numeric cell, which is nowrap — let it wrap
+   so it is never clipped at the edge of a narrow grid track */
+table.pz td.num .tag{white-space:normal;display:block;line-height:1.3}
 table.pz tbody tr:last-child td{border-bottom:none}
 table.pz tbody tr:nth-child(even) td{background:rgba(255,255,255,.022)}
 table.pz tbody tr:hover td{background:var(--hover)}
@@ -225,6 +232,24 @@ def table(headers, rows, scroll: bool = False) -> str:
 
 def td(v, cls: str = "") -> str:
     return f'<td class="{cls}">{v}</td>'
+
+
+def md(text: str) -> str:
+    """Convert **bold** for every pair, not just the first one."""
+    import re
+    return re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", text)
+
+
+def cols(items, min_px: int = 300) -> str:
+    """
+    Responsive columns for the research blocks. A flex row with width:100%
+    tables inside collapses and the columns overlap; grid with a hard minmax
+    keeps each block in its own track and wraps cleanly instead.
+    """
+    inner = "".join(f'<div style="min-width:0">{c}</div>' for c in items)
+    return (f'<div style="display:grid;gap:18px 22px;'
+            f'grid-template-columns:repeat(auto-fit,minmax({min_px}px,1fr))">'
+            f'{inner}</div>')
 
 
 def card(title: str, body: str, hint: str = "") -> str:

@@ -12,16 +12,22 @@ python3 run.py
 Opens <http://127.0.0.1:8077>. First launch downloads ~25MB of data and takes
 about a minute; after that it starts instantly from cache.
 
-## What each tab does
+## How it works
 
-| Tab | Purpose |
-|---|---|
-| **Draft Board** | Draft-day command centre. Mark players as they go, hit *Run Monte Carlo recommendation* on your turn. ~6s per run. |
-| **Players** | Full pool ranked by value over replacement, with source disagreement and measured weekly volatility. |
-| **Injuries & Suspensions** | Everyone the feeds flag, worst first. Set games-missed manually to discount a projection everywhere. |
-| **Draft Simulator** | Plays your whole draft hundreds of times; shows what you realistically end up with at each pick. |
-| **Season Simulator** | Your roster vs the other nine, 14 weeks + playoffs. Playoff and title odds. |
-| **Saved Runs** | Everything is stored in SQLite and reloadable. |
+One screen. Hit **Initiate Draft** and the room opens:
+
+- **Board** — every available player, ranked by value over replacement.
+  `＋ Mine` adds to your roster, `✕ Taken` assigns to whoever is on the clock
+  (override the seat with the dropdown), `🔍` opens research.
+- **Draft agent** — press *What should I take?*. It names a pick, gives the
+  reasoning, ranks which positions to focus on, and lists alternatives with the
+  reason each is on the list.
+- **My team** — starters, bench and the exact slots still to fill.
+- **League** — what all ten rosters look like and what each still needs. This is
+  what the agent reads; it is not simulating your opponents, it is counting them.
+- **Research** — for any player: 2026 projection, 2025 actuals, weekly floor and
+  ceiling, boom/bust rates, market signal and the full 2025 game log. Every row
+  names the feed it came from.
 
 ## Data sources — all free, none need a key
 

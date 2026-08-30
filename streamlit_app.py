@@ -1,9 +1,9 @@
 """
-The Petting Zoo — draft assistant (Streamlit build, for easy hosting).
+The Petting Zoo — live draft room.
 
-Same engine as the local FastAPI app, and the same visual design: read-only
-panels are rendered as HTML through `pettingzoo.ui` so both apps match, while
-anything you interact with stays a real Streamlit widget.
+One screen, no tabs. Everything the draft needs is visible at once: the board,
+your roster and its gaps, what the other nine teams have taken, the agent's
+call, and the research behind it.
 """
 from __future__ import annotations
 import base64
@@ -16,495 +16,368 @@ from pettingzoo import sources, store, ui
 from pettingzoo import pool as poolmod
 from pettingzoo.pool import build_pool, norm_name
 from pettingzoo.valuation import compute_valuation, waiver_levels
-from pettingzoo.draft import simulate, optimal_lineup
-from pettingzoo.advisor import advise
-from pettingzoo.strategies import STRATEGIES, backtest, backtest_seasons, round_plan
-from pettingzoo.season import build_league, simulate_season
+from pettingzoo.draft import optimal_lineup
+from pettingzoo.draftroom import LiveDraft, agent, STARTER_SLOTS
+from pettingzoo.research import dossier, summary_lines
 from pettingzoo.league import (LEAGUE_NAME, MY_TEAM_NAME, N_TEAMS, ROSTER_SIZE,
-                               DRAFT_DATE, snake_pick_numbers)
+                               DRAFT_DATE, TEAM_NAMES)
 
 ASSETS = Path(__file__).resolve().parent / "pettingzoo" / "web" / "assets"
-LOGO = ASSETS / "logo.png"
-LOGO_SM = ASSETS / "logo-sm.png"
-
-st.set_page_config(page_title="The Petting Zoo — Draft Assistant",
-                   page_icon=str(ASSETS / "favicon.png") if
-                   (ASSETS / "favicon.png").exists() else "🦁",
+st.set_page_config(page_title="The Petting Zoo — Draft Room",
+                   page_icon=str(ASSETS / "favicon.png") if (ASSETS / "favicon.png").exists() else "🦁",
                    layout="wide")
-
-
-def _b64(path: Path) -> str:
-    return base64.b64encode(path.read_bytes()).decode()
 st.markdown(ui.CSS, unsafe_allow_html=True)
 H = lambda s: st.markdown(s, unsafe_allow_html=True)
+b64 = lambda p: base64.b64encode(Path(p).read_bytes()).decode()
 
 
-# ttl matters here: without it this cache would hold the very first pool for the
-# life of the process and the per-source TTLs in sources.py would never be
-# consulted. A rebuild only reads local files, so 30 min is cheap.
-@st.cache_resource(ttl=1800, show_spinner="Loading player data…")
+@st.cache_resource(ttl=1800, show_spinner="Loading players…")
 def load():
-    poolmod.GAMES_MISSED_OVERRIDES = {k: (v[0], v[1])
-                                      for k, v in store.get_overrides().items()}
-    pool = build_pool()          # re-pulls only sources past their own TTL
-    repl = compute_valuation(pool)
-    return pool, repl, waiver_levels(pool)
+    poolmod.GAMES_MISSED_OVERRIDES = {k: (v[0], v[1]) for k, v in store.get_overrides().items()}
+    p = build_pool()
+    return p, compute_valuation(p), waiver_levels(p)
 
-
-ss = st.session_state
-ss.setdefault("taken", [])
-ss.setdefault("mine", [])
-ss.setdefault("slot", store.get_setting("my_draft_slot") or 1)
 
 pool, repl, waiver = load()
-by_name = {p.name: p for p in pool}
+by_name = {norm_name(p.name): p for p in pool}
 ranked = sorted([p for p in pool if p.proj > 0], key=lambda p: -p.vor)
-names = [p.name for p in ranked]
+
+ss = st.session_state
+if "live" not in ss:
+    ss.live = LiveDraft(my_slot=int(store.get_setting("my_draft_slot") or 1))
+live: LiveDraft = ss.live
+ss.setdefault("selected", None)
+ss.setdefault("agent_cache", {})
+
+
+# ------------------------------------------------------------------ actions
+def _resolve(row_idx: int) -> str | None:
+    view = ss.get("board_view") or []
+    return view[row_idx] if 0 <= row_idx < len(view) else None
+
+
+def _take(row_idx: int, slot: int | None):
+    nm = _resolve(row_idx)
+    if nm and norm_name(nm) not in {norm_name(x) for x in live.taken_names()}:
+        live.add(nm, slot)
+        ss.selected = None
+
+
+def on_mine():
+    c = ss.get("click_mine")
+    if c is not None:
+        _take(c["row"], live.my_slot)
+
+
+def on_info():
+    c = ss.get("click_info")
+    if c is not None:
+        ss.selected = _resolve(c["row"])
+
+
+def on_taken():
+    c = ss.get("click_taken")
+    if c is not None:
+        # in a live draft picks arrive in order, so the seat on the clock is
+        # nearly always right; the override below fixes the exceptions
+        slot = ss.get("assign_to_slot") or live.on_the_clock
+        if slot == live.my_slot:
+            slot = next((s for s in range(1, N_TEAMS + 1) if s != live.my_slot), 1)
+        _take(c["row"], slot)
+
 
 # ------------------------------------------------------------------ sidebar
 with st.sidebar:
-    if LOGO_SM.exists():
-        H(f'<div class="pz-brand"><img src="data:image/png;base64,{_b64(LOGO_SM)}" '
-          f'alt="The Petting Zoo"></div>')
-    else:
-        H(f'<div style="font-size:17px;font-weight:650">🦁 {LEAGUE_NAME}</div>')
-    H(f'<div class="dim" style="font-size:11.5px;text-align:center">'
-      f'{N_TEAMS} teams · full PPR · {ROSTER_SIZE}-man roster</div>'
-      f'<div class="dim" style="font-size:11.5px;margin-bottom:10px;text-align:center">'
-      f'Draft {DRAFT_DATE[:10]} · you are <i>{MY_TEAM_NAME}</i></div>')
+    if (ASSETS / "logo-sm.png").exists():
+        H(f'<div class="pz-brand"><img src="data:image/png;base64,{b64(ASSETS/"logo-sm.png")}"></div>')
+    H(f'<div class="dim" style="text-align:center;font-size:11.5px">{N_TEAMS} teams · full PPR · '
+      f'{ROSTER_SIZE} roster<br>you are <i>{MY_TEAM_NAME}</i></div>')
+    st.divider()
 
-    ss.slot = st.selectbox("Your draft slot", range(1, N_TEAMS + 1),
-                           index=int(ss.slot) - 1, key="w_slot")
-    store.set_setting("my_draft_slot", ss.slot)
-    picks = snake_pick_numbers(ss.slot)
-    H(f'<div class="tag">picks {", ".join(map(str, picks[:7]))} …</div>')
+    if not live.started:
+        slot = st.selectbox("Your draft slot", range(1, N_TEAMS + 1),
+                            index=live.my_slot - 1, key="w_slot")
+        live.my_slot = slot
+        store.set_setting("my_draft_slot", slot)
+        H(f'<div class="tag">picks {", ".join(map(str, live.my_picks[:7]))} …</div>')
+        with st.expander("Name the other seats (optional)"):
+            st.caption("Only matters for reading the league table; seat order is "
+                       "set by your LM and is not published anywhere.")
+            others = [t for t in TEAM_NAMES if t != MY_TEAM_NAME]
+            for s in range(1, N_TEAMS + 1):
+                if s == live.my_slot:
+                    continue
+                live.seat_names[s] = st.text_input(
+                    f"Seat {s}", value=live.seat_names.get(s, ""),
+                    placeholder=others[(s - 1) % len(others)], key=f"seat_{s}")
+    else:
+        H(f'<div class="tag">your slot {live.my_slot} · picks '
+          f'{", ".join(str(p) for p in live.my_picks if p >= live.pick_no)[:34]}…</div>')
+        st.divider()
+        last = live.picks[-1].player if live.picks else None
+        if st.button(f"↶ Undo{f': {last}' if last else ''}", use_container_width=True,
+                     disabled=not live.picks, key="w_undo"):
+            live.undo(); ss.selected = None; st.rerun()
+        if st.button("Reset draft", use_container_width=True, key="w_reset"):
+            ss.live = LiveDraft(my_slot=live.my_slot); ss.selected = None
+            ss.agent_cache = {}; st.rerun()
 
     st.divider()
-    if st.button("↻ Refresh all data", use_container_width=True, key="w_refresh"):
-        with st.spinner("Re-pulling every source…"):
-            errs = {}
-            for nm, fn in sources.REFRESHERS.items():
-                try:
-                    fn(force=True)
-                except Exception as e:
-                    errs[nm] = str(e)
-        load.clear()
-        st.success("Refreshed.") if not errs else st.warning(f"Some failed: {errs}")
-        st.rerun()
+    if st.button("↻ Refresh player data", use_container_width=True, key="w_refresh"):
+        with st.spinner("Re-pulling sources…"):
+            for fn in sources.REFRESHERS.values():
+                try: fn(force=True)
+                except Exception: pass
+        load.clear(); st.rerun()
+    stale = [d for d in sources.data_status() if d["stale"]]
+    H(f'<div class="tag">{"all sources fresh" if not stale else f"{len(stale)} refreshing next load"}</div>')
 
-    status = sources.data_status()
-    stale = [d for d in status if d["stale"]]
-    with st.expander(f"Data freshness — "
-                     f"{'all fresh' if not stale else f'{len(stale)} refreshing'}"):
-        for d in status:
-            nm = d["source"].replace(".json", "").replace(".csv", "")
-            if d["missing"]:
-                H(f'<div class="tag">• <b>{nm}</b> — not downloaded</div>')
-            else:
-                mins = d["age_seconds"] // 60
-                ago = f"{mins}m ago" if mins < 90 else f"{mins // 60}h ago"
-                H(f'<div class="tag">{"⟳" if d["stale"] else "✓"} <b>{nm}</b> — {ago} '
-                  f'<span class="dim">(ttl {d["ttl_seconds"] // 3600}h)</span></div>')
-        H('<div class="pz-hint">Sources re-pull automatically once past their limit. '
-          'Refresh forces everything now.</div>')
 
-    st.divider()
-    pick_no = len(ss.taken) + 1
-    H(ui.stats([("On the clock", pick_no, f"round {(pick_no - 1) // N_TEAMS + 1}", False),
-                ("My roster", f"{len(ss.mine)}/{ROSTER_SIZE}", "", False)]))
-    last = ss.taken[-1] if ss.taken else None
-    if st.button(f"↶ Undo{f': {last}' if last else ''}", key="w_undo",
-                 use_container_width=True, disabled=not ss.taken):
-        gone = ss.taken.pop()
-        if gone in ss.mine:
-            ss.mine.remove(gone)
-        st.rerun()
-    if st.button("Clear draft", use_container_width=True, key="w_clear",
-                 disabled=not ss.taken):
-        ss.taken, ss.mine = [], []
-        st.rerun()
+# ------------------------------------------------------------------ pre-draft
+if not live.started:
+    if (ASSETS / "logo.png").exists():
+        st.markdown(
+            f'<div style="text-align:center;margin:8px 0 4px">'
+            f'<img src="data:image/png;base64,{b64(ASSETS/"logo.png")}" style="max-width:290px">'
+            f'</div>', unsafe_allow_html=True)
+    H(f'<div style="text-align:center" class="dim">Draft {DRAFT_DATE[:10]} · '
+      f'you pick from seat <b>{live.my_slot}</b> · {len(ranked)} players loaded</div>')
 
-tabs = st.tabs(["🎯 Draft Board", "📋 Strategies", "👥 Players",
-                "🚑 Injuries", "🎲 Draft Sim", "🏆 Season Sim"])
-
-# ------------------------------------------------------------------ board
-with tabs[0]:
-    taken_set = set(ss.taken)
-    pick_no = len(ss.taken) + 1
-    rnd = (pick_no - 1) // N_TEAMS + 1
-    in_rd = (pick_no - 1) % N_TEAMS + 1
-    on_clock = in_rd if rnd % 2 else N_TEAMS - in_rd + 1
-    nxt = next((p for p in picks if p >= pick_no), None)
-    mine_p = [by_name[n] for n in ss.mine if n in by_name]
-
-    counts = {}
-    for p in mine_p:
-        counts[p.pos] = counts.get(p.pos, 0) + 1
-    need = [f"{n - counts.get(k, 0)} {k}"
-            for k, n in (("QB", 1), ("RB", 2), ("WR", 2), ("TE", 1),
-                         ("K", 1), ("D/ST", 1)) if counts.get(k, 0) < n]
-
-    H(ui.stats([
-        ("On the clock", pick_no,
-         f"round {rnd}, pick {in_rd}" +
-         (" — YOU ARE UP" if on_clock == ss.slot else f" — slot {on_clock}"),
-         on_clock == ss.slot),
-        ("My next pick", nxt or "—",
-         "then " + ", ".join(str(p) for p in picks if p > (nxt or 0))[:24] or "—", False),
-        ("Roster filled", f"{len(ss.mine)}/{ROSTER_SIZE}",
-         ("still need " + ", ".join(need)) if need else "starters complete", False),
-    ]))
-
-    c1, c2, c3 = st.columns([2, 1.4, 1.4])
-    dyn = c1.toggle("Dynamic advisor", value=True, key="w_dyn",
-                    help="Evaluates your roster, the remaining board, positional "
-                         "runs and scarcity — not just raw value.")
-    sims = c2.select_slider("Rollouts", [40, 70, 120, 200], value=120, key="w_sims")
-    go = c3.button("▶ What should I take?", type="primary",
-                   use_container_width=True, key="w_advise")
-    if go:
-        with st.spinner("Playing the rest of the draft out…"):
-            ss.advice = advise(pool, ss.slot, ss.taken, ss.mine, repl, waiver,
-                               pick_no=pick_no, n_sims=sims,
-                               scan_sims=80 if dyn else 20, top_k=6)
-
-    adv = ss.get("advice")
-    if adv and adv["pick_no"] == pick_no:
-        body = ""
-        if dyn:
-            why = "".join(f"<div>{ln.replace('**', '')}</div>" for ln in adv["reasoning"])
-            body += f'<div class="pz-why">{why}</div>'
-            rows = []
-            for i, p in enumerate(adv["positions"]):
-                capped = p["urgency"] < -900
-                urg = ('<span class="dim">not needed</span>' if capped
-                       else '<span class="good">best</span>' if p["urgency"] == 0
-                       else f'<span class="bad">{p["urgency"]:.1f}</span>')
-                sv = p["p_best_survives"]
-                svs = ("—" if sv is None else
-                       f'<span class="bad">never</span>' if sv == 0 else f"{sv * 100:.0f}%")
-                rows.append(([
-                    ui.td(ui.pill(p["pos"])),
-                    ui.td(p["best_by_rollout"] or p["best_available"]),
-                    ui.td(ui.num(p["rollout_mean"], 0), "num"),
-                    ui.td(urg, "num"),
-                    ui.td(f'<span class="{"bad" if p["cost_of_waiting"] >= 15 else ""}">'
-                          f'{p["cost_of_waiting"]:.0f}</span>', "num"),
-                    ui.td(p["count_above_replacement"], "num"),
-                    ui.td(svs, "num"),
-                    ui.td(f'<span class="dim">{p["tier_left"]}</span>', "num"),
-                ], i == 0 and not capped))
-            body += ui.table(
-                [("Pos", 0), ("Best option", 0), ("Season pts", 1), ("vs best", 1),
-                 ("Decay by next pick", 1), ("Left over repl.", 1),
-                 ("Survives", 1), ("In tier", 1)], rows)
-            hot = [k for k, v in (adv["runs"] or {}).items() if v.get("hot")]
-            if hot:
-                body += (f'<div class="pz-run"><b>Run alert:</b> {", ".join(hot)} '
-                         f'going fast — the next tier there will clear quicker than ADP implies.</div>')
-
-        crows = []
-        for i, r in enumerate(adv["recommendations"]):
-            cost = ('<span class="good">best</span>' if r["cost_vs_best"] == 0
-                    else f'<span class="bad">{r["cost_vs_best"]:.1f}</span>')
-            crows.append(([
-                ui.td(f'<b>{r["name"]}</b>{ui.flag_html(r["flag"])}'),
-                ui.td(ui.pill(r["pos"])),
-                ui.td(ui.num(r["proj"]), "num"),
-                ui.td(ui.num(r["vor"]), "num"),
-                ui.td("—" if r["adp"] > 900 else ui.num(r["adp"]), "num"),
-                ui.td(f'<b>{r["mean"]:.1f}</b>', "num"),
-                ui.td(f'<span class="dim">{r["p10"]:.0f}–{r["p90"]:.0f}</span>', "num"),
-                ui.td(cost, "num"),
-            ], i == 0))
-        body += '<h2 style="margin-top:16px">Candidates</h2>' + ui.table(
-            [("Take", 0), ("Pos", 0), ("Proj", 1), ("VOR", 1), ("ADP", 1),
-             ("Season pts", 1), ("Range", 1), ("Cost", 1)], crows)
-        H(ui.card("Who should I take?", body,
-                  "Each candidate is forced as your pick, then the rest of the draft is "
-                  "played out many times. <b>Cost</b> is the projected lineup points you "
-                  "give up versus the best option — it already accounts for who will still "
-                  "be there at your next turn."))
-    elif adv:
-        st.info("Board has moved since that run — click again for a fresh read.")
-
-    left, right = st.columns([3, 1.15])
-    with left:
-        H('<div class="pz-card" style="padding-bottom:6px"><h2>Board — tick a player as they go</h2></div>')
-        f1, f2 = st.columns(2)
-        q = f1.text_input("Search", placeholder="Type a name…", key="w_board_q",
-                          label_visibility="collapsed")
-        posf = f2.multiselect("Position", ["QB", "RB", "WR", "TE", "K", "D/ST"],
-                              placeholder="All positions", key="w_board_pos",
-                              label_visibility="collapsed")
-        qn = norm_name(q) if q else ""
-        avail = [p for p in ranked
-                 if p.name not in taken_set
-                 and (not posf or p.pos in posf)
-                 and (not qn or qn in norm_name(p.name))][:60]
-
-        board = pd.DataFrame([{
-            "Taken": False, "Mine": False, "Player": p.name,
-            "Pos": f"{p.pos}{p.pos_rank}", "Tier": p.tier, "Proj": p.proj,
-            "VOR": p.vor, "ADP": None if p.adp > 900 else p.adp,
-            "Bye": p.bye, "Flag": p.flag or "",
-        } for p in avail])
-
-        edited = st.data_editor(
-            board, key=f"board_{len(ss.taken)}_{len(ss.mine)}",
-            hide_index=True, use_container_width=True, height=440,
-            column_config={
-                "Taken": st.column_config.CheckboxColumn("Taken", width="small",
-                                                         help="Drafted by another team"),
-                "Mine": st.column_config.CheckboxColumn("Mine", width="small",
-                                                        help="I drafted this player"),
-                "Player": st.column_config.TextColumn("Player", width="medium"),
-                "Pos": st.column_config.TextColumn("Pos", width="small"),
-                "Tier": st.column_config.NumberColumn("Tier", width="small"),
-                "Proj": st.column_config.NumberColumn(format="%.1f", width="small"),
-                "VOR": st.column_config.NumberColumn(format="%.1f", width="small"),
-                "ADP": st.column_config.NumberColumn(format="%.1f", width="small"),
-                "Bye": st.column_config.NumberColumn("Bye", width="small"),
-                "Flag": st.column_config.TextColumn("Flag", width="small"),
-            },
-            disabled=["Player", "Pos", "Tier", "Proj", "VOR", "ADP", "Bye", "Flag"])
-
-        if not edited.empty:
-            new_mine = edited.loc[edited["Mine"], "Player"].tolist()
-            new_taken = edited.loc[edited["Taken"] & ~edited["Mine"], "Player"].tolist()
-            if new_mine or new_taken:
-                for nm in new_mine:
-                    if nm not in ss.taken:
-                        ss.taken.append(nm)
-                    if nm not in ss.mine:
-                        ss.mine.append(nm)
-                for nm in new_taken:
-                    if nm not in ss.taken:
-                        ss.taken.append(nm)
-                st.rerun()
-        H('<div class="pz-hint"><b>Taken</b> = drafted by another team. '
-          '<b>Mine</b> = you drafted them (counts as taken too). Undo is in the sidebar.</div>')
-
-    with right:
-        if mine_p:
-            pts, starters = optimal_lineup(mine_p)
-            used = {id(p) for p in starters}
-            rows = [([ui.td(f'<span class="tag">{p.pos}</span>'), ui.td(p.name),
-                      ui.td(f"{p.proj:.0f}", "num")], False) for p in starters]
-            rows.append(([ui.td(""), ui.td("<b>Total</b>"),
-                          ui.td(f"<b>{pts:.0f}</b>", "num")], False))
-            body = ui.table([("Slot", 0), ("Player", 0), ("Proj", 1)], rows)
-            bench = [p for p in mine_p if id(p) not in used]
-            if bench:
-                body += ('<h2 style="margin-top:14px">Bench</h2>' + ui.table(
-                    [("Pos", 0), ("Player", 0), ("Proj", 1)],
-                    [([ui.td(ui.pill(p.pos)), ui.td(p.name),
-                       ui.td(f"{p.proj:.0f}", "num")], False) for p in bench]))
-            H(ui.card("My team", body))
-        else:
-            H(ui.card("My team", '<div class="dim" style="padding:18px 0;text-align:center">'
-                                 'No players yet.</div>'))
-
-    with st.expander("Correct the draft log (bulk edit)"):
-        st.caption("The board is the fast way in. Use these to fix an out-of-order "
-                   "entry or paste a batch.")
-        t = st.multiselect("Everyone drafted so far (in order)", names,
-                           default=ss.taken, key="fix_taken")
-        m = st.multiselect("Which of those are mine", t,
-                           default=[x for x in ss.mine if x in t], key="fix_mine")
-        if st.button("Apply corrections", key="w_apply"):
-            ss.taken, ss.mine = list(t), list(m)
+    c1, c2, c3 = st.columns([1, 1.1, 1])
+    with c2:
+        st.write("")
+        if st.button("▶  INITIATE DRAFT", type="primary", use_container_width=True,
+                     key="w_start"):
+            live.started = True
             st.rerun()
 
-# ------------------------------------------------------------------ strategies
-with tabs[1]:
-    c1, c2 = st.columns([3, 1])
-    mode = c1.radio("Score by", ["Title odds (plays real seasons — slower, truer)",
-                                 "Projected lineup points (fast)"],
-                    horizontal=False, label_visibility="collapsed", key="w_stmode")
-    run = c2.button("▶ Backtest all strategies", type="primary",
-                    use_container_width=True, key="w_stbtn")
-    if run:
-        with st.spinner("Drafting and simulating…"):
-            if mode.startswith("Title"):
-                ss.strat = ("season", backtest_seasons(pool, ss.slot, repl, waiver,
-                                                       n_drafts=20, n_seasons=80))
-            else:
-                ss.strat = ("points", backtest(pool, ss.slot, repl, waiver, n_sims=120))
+    top = ranked[:12]
+    rows = [([ui.td(f"{i}"), ui.td(f"<b>{p.name}</b>{ui.flag_html(p.flag, p.games_missed)}"),
+              ui.td(ui.pill(p.pos, str(p.pos_rank))), ui.td(f"{p.proj:.0f}", "num"),
+              ui.td(f"{p.vor:.0f}", "num"),
+              ui.td("—" if p.adp > 900 else f"{p.adp:.1f}", "num")], False)
+             for i, p in enumerate(top, 1)]
+    H(ui.card("Board preview — best available by value over replacement",
+              ui.table([("#", 0), ("Player", 0), ("Pos", 0), ("Proj", 1), ("VOR", 1), ("ADP", 1)], rows),
+              "Set your slot on the left, then hit Initiate Draft. The agent starts "
+              "advising from your first pick."))
+    st.stop()
 
-    if ss.get("strat"):
-        kind, res = ss.strat
-        if kind == "season":
-            mx = max(r["title_odds"] for r in res)
-            rows = [([
-                ui.td(f'<b>{r["name"]}</b><div class="dim" style="font-size:11.5px">'
-                      f'{r["blurb"]}</div>', "wrap"),
-                ui.td(f'<b>{r["title_odds"] * 100:.1f}%</b>', "num"),
-                ui.td(f'{r["playoff_odds"] * 100:.0f}%', "num"),
-                ui.td(f'{r["exp_wins"]:.2f}', "num"),
-                ui.td(f'<span class="dim">{r["worst_draft_title"] * 100:.0f}–'
-                      f'{r["best_draft_title"] * 100:.0f}%</span>', "num"),
-                ui.td(ui.bar(r["title_odds"] / mx)),
-            ], i == 0) for i, r in enumerate(res)]
-            H(ui.card("Which strategy actually wins in this league?", ui.table(
-                [("Strategy", 0), ("Title odds", 1), ("Playoffs", 1), ("Wins", 1),
-                 ("Spread across drafts", 1), ("", 0)], rows),
-                "Baseline for a 10-team league is 10%. The <b>spread</b> is the range "
-                "across individual drafts within one strategy — it is wide, which is the "
-                "real lesson: which players you land matters more than the plan's name."))
-        else:
-            rows = [([
-                ui.td(f'<b>{r["name"]}</b><div class="dim" style="font-size:11.5px">'
-                      f'{r["blurb"]}</div>', "wrap"),
-                ui.td(f'<b>{r["mean"]:.1f}</b>', "num"),
-                ui.td(f'<span class="dim">{r["p10"]:.0f}–{r["p90"]:.0f}</span>', "num"),
-                ui.td('<span class="good">best</span>' if r["vs_best"] == 0
-                      else f'<span class="bad">{r["vs_best"]:.1f}</span>', "num"),
-                ui.td(f'<span class="tag">{r["typical_open"]} '
-                      f'<span class="dim">{r["open_pct"]}%</span></span>'),
-            ], i == 0) for i, r in enumerate(res)]
-            H(ui.card("Which strategy actually wins in this league?", ui.table(
-                [("Strategy", 0), ("Mean lineup", 1), ("p10–p90", 1), ("vs best", 1),
-                 ("Typical open", 0)], rows),
-                "Ranking by projected points quietly favours the Balanced plan, because "
-                "that is the number it maximises. <b>Title odds</b> is the honest test."))
+
+# ------------------------------------------------------------------ live
+taken_norm = {norm_name(n) for n in live.taken_names()}
+my_players = [by_name[norm_name(n)] for n in live.my_roster() if norm_name(n) in by_name]
+mine_up = live.on_the_clock == live.my_slot
+
+H(ui.stats([
+    ("Pick", live.pick_no, f"round {live.round_no}", mine_up),
+    ("On the clock", "YOU" if mine_up else live.name_for(live.on_the_clock),
+     "your pick — go" if mine_up else f"seat {live.on_the_clock}", mine_up),
+    ("Your next pick", live.next_pick or "—",
+     f"{live.picks_until_my_turn} picks away" if not mine_up else "now", False),
+    ("Roster", f"{len(my_players)}/{ROSTER_SIZE}",
+     ", ".join(f"need {n} {p}" for p, n in live.needs_of(live.my_slot, by_name).items()) or "starters set",
+     False),
+]))
+
+# ---- the agent -----------------------------------------------------------
+ck = (live.pick_no, len(live.picks))
+run_agent = st.button("🧠  What should I take?", type="primary", key="w_agent") or \
+            (mine_up and ck in ss.agent_cache)
+if run_agent and ck not in ss.agent_cache:
+    with st.spinner("Reading the board and playing the draft forward…"):
+        ss.agent_cache = {ck: agent(pool, live, repl, waiver)}
+adv = ss.agent_cache.get(ck)
+
+if adv:
+    body = '<div class="pz-why">' + "".join(
+        f"<div>{ui.md(l)}</div>" for l in adv["rationale"]) + "</div>"
+    focus = [p for p in adv["positions"] if p["urgency"] is not None][:4]
+    frows = []
+    for i, p in enumerate(focus):
+        frows.append(([
+            ui.td(ui.pill(p["pos"])),
+            ui.td(f"<b>{p['best_by_rollout']}</b>"),
+            ui.td(f"{p['rollout_mean']:.0f}" if p["rollout_mean"] else "—", "num"),
+            ui.td('<span class="good">best</span>' if p["urgency"] == 0
+                  else f'<span class="bad">{p["urgency"]:.1f}</span>', "num"),
+            ui.td(f'<span class="{"bad" if p["decay"]>=12 else ""}">{p["decay"]:.0f}</span>', "num"),
+            ui.td(f'<b>{p["teams_needing"]}</b>' if p["teams_needing"] >= 3
+                  else str(p["teams_needing"]), "num"),
+            ui.td(str(p["left_above_repl"]), "num"),
+            ui.td("—" if p["survives"] is None else
+                  ('<span class="bad">never</span>' if p["survives"] == 0
+                   else f'{p["survives"]*100:.0f}%'), "num"),
+        ], i == 0))
+    body += '<div class="pz-h">Where to focus</div>' + ui.table(
+        [("Pos", 0), ("Best available", 0), ("Season pts", 1), ("vs best", 1),
+         ("Falls by", 1), ("Slots needed", 1), ("Left over repl.", 1),
+         ("Survives", 1)], frows)
+    if adv["alternatives"]:
+        arows = [([ui.td(f"<b>{a['name']}</b>{ui.flag_html(a.get('flag'))}"),
+                   ui.td(ui.pill(a["pos"])),
+                   ui.td(f"{a['proj']:.0f}", "num"),
+                   ui.td(f"{a['cost_vs_best']:.1f}", "num"),
+                   ui.td(f'<span class="dim">{a["why"]}</span>', "wrap")], False)
+                  for a in adv["alternatives"][:5]]
+        body += '<div class="pz-h">Also consider</div>' + ui.table(
+            [("Player", 0), ("Pos", 0), ("Proj", 1), ("Cost", 1), ("Why it is on the list", 0)], arows)
+    H(ui.card("Draft agent", body,
+              "<b>Slots needed</b> is how many starter slots at that position are still "
+              "empty across the teams picking before your next turn — that is what "
+              "actually causes a run. <b>Falls by</b> is how far the best player there "
+              "drops between now and then. <b>Survives</b> is how often the top name is "
+              "still on the board when you pick again."))
+
+# ---- board | my team | league -------------------------------------------
+left, right = st.columns([2.15, 1])
+
+with left:
+    f1, f2, f3 = st.columns([2, 2, 1.4])
+    q = f1.text_input("Search", placeholder="Search player…", label_visibility="collapsed",
+                      key="w_q")
+    posf = f2.multiselect("Position", ["QB", "RB", "WR", "TE", "K", "D/ST"],
+                          placeholder="All positions", label_visibility="collapsed", key="w_pos")
+    assign = f3.selectbox("Assign 'Taken' to",
+                          ["On the clock"] + [f"Seat {s} — {live.name_for(s)}"
+                                              for s in range(1, N_TEAMS + 1) if s != live.my_slot],
+                          label_visibility="collapsed", key="w_assign")
+    ss.assign_to_slot = None if assign == "On the clock" else int(assign.split()[1])
+
+    qn = norm_name(q) if q else ""
+    avail = [p for p in ranked
+             if norm_name(p.name) not in taken_norm
+             and (not posf or p.pos in posf)
+             and (not qn or qn in norm_name(p.name))][:70]
+    ss.board_view = [p.name for p in avail]
+
+    df = pd.DataFrame([{
+        "Mine": "＋ Mine", "Taken": "✕ Taken", "Info": "🔍",
+        "Player": p.name, "Pos": f"{p.pos}{p.pos_rank}", "Tier": p.tier,
+        "Proj": p.proj, "VOR": p.vor,
+        "ADP": None if p.adp > 900 else p.adp, "Bye": p.bye,
+        "2025": p.actual_2025, "Flag": p.flag or "",
+    } for p in avail])
+
+    sel = st.dataframe(
+        df, hide_index=True, use_container_width=True, height=430,
+        on_select="rerun", selection_mode="single-row", key="w_board",
+        column_config={
+            "Mine": st.column_config.ButtonColumn(
+                "", width="small", type="primary", on_click=on_mine, key="click_mine",
+                help="I drafted this player"),
+            "Taken": st.column_config.ButtonColumn(
+                "", width="small", on_click=on_taken, key="click_taken",
+                help="Another team drafted this player"),
+            "Info": st.column_config.ButtonColumn(
+                "", width="small", type="tertiary", on_click=on_info, key="click_info",
+                help="Show research, 2025 game log and sources"),
+            "Player": st.column_config.TextColumn(width="medium"),
+            "Pos": st.column_config.TextColumn(width="small"),
+            "Tier": st.column_config.NumberColumn(width="small"),
+            "Proj": st.column_config.NumberColumn(format="%.1f", width="small"),
+            "VOR": st.column_config.NumberColumn(format="%.1f", width="small"),
+            "ADP": st.column_config.NumberColumn(format="%.1f", width="small"),
+            "Bye": st.column_config.NumberColumn(width="small"),
+            "2025": st.column_config.NumberColumn(format="%.0f", width="small"),
+            "Flag": st.column_config.TextColumn(width="small"),
+        })
+    rows_sel = (sel.selection.rows if hasattr(sel, "selection") else []) or []
+    if rows_sel and not ss.get("selected"):
+        ss.selected = ss.board_view[rows_sel[0]] if rows_sel[0] < len(ss.board_view) else None
+    H('<div class="pz-hint"><b>＋ Mine</b> adds to your roster. <b>✕ Taken</b> assigns the '
+      'player to whoever is on the clock — use the dropdown above to attribute it to a '
+      'different seat. <b>🔍</b> opens that player\'s research, 2025 game log and sources '
+      'below the board.</div>')
+
+with right:
+    if my_players:
+        pts, starters = optimal_lineup(my_players)
+        used = {id(p) for p in starters}
+        rows = [([ui.td(f'<span class="tag">{p.pos}</span>'), ui.td(p.name),
+                  ui.td(f"{p.proj:.0f}", "num")], False) for p in starters]
+        rows.append(([ui.td(""), ui.td("<b>Total</b>"), ui.td(f"<b>{pts:.0f}</b>", "num")], False))
+        body = ui.table([("Slot", 0), ("Player", 0), ("Proj", 1)], rows)
+        bench = [p for p in my_players if id(p) not in used]
+        if bench:
+            body += '<div class="pz-h">Bench</div>' + ui.table(
+                [("Pos", 0), ("Player", 0), ("Proj", 1)],
+                [([ui.td(ui.pill(p.pos)), ui.td(p.name), ui.td(f"{p.proj:.0f}", "num")], False)
+                 for p in bench])
     else:
-        H(ui.card("Which strategy actually wins in this league?",
-                  '<div class="dim" style="padding:18px 0;text-align:center">'
-                  'Run a backtest to compare all eight plans.</div>',
-                  "Each strategy is drafted against the ADP opponent model and scored."))
+        body = '<div class="dim" style="padding:14px 0;text-align:center">No picks yet.</div>'
+    gaps = live.needs_of(live.my_slot, by_name)
+    if gaps:
+        body += ('<div class="pz-h">Still to fill</div>' +
+                 " ".join(f'<span class="pill {ui.POS_CLS.get(p,p)}">{p}'
+                          f'{" ×"+str(n) if n>1 else ""}</span>' for p, n in gaps.items()))
+    H(ui.card("My team", body))
 
-    pickname = st.selectbox("Round-by-round plan", [s.name for s in STRATEGIES],
-                            key="w_stplan")
-    strat = next(s for s in STRATEGIES if s.name == pickname)
-    rows = [([ui.td(f'<span class="tag">R{r["round"]}</span>'),
-              ui.td(f'<span class="tag">#{r["pick"]}</span>', "num"),
-              ui.td(r["target"])], False) for r in round_plan(strat, ss.slot)]
-    H(ui.card(f"{strat.name} — plan for slot {ss.slot}",
-              f'<div class="pz-why"><div><b>{strat.blurb}</b></div>'
-              f'<div class="dim">{strat.rationale}</div></div>' +
-              ui.table([("Round", 0), ("Your pick", 1), ("Target", 0)], rows)))
+    lrows = []
+    for t in live.league_table(by_name):
+        shape = " ".join(f"{v}{k}" for k, v in sorted(t["counts"].items())) or "—"
+        need = ", ".join(f"{k}" for k in t["needs"] if k != "FLEX") or "set"
+        lrows.append(([ui.td(f'<b>{t["team"]}</b>' if t["is_me"] else t["team"]),
+                       ui.td(str(t["n"]), "num"),
+                       ui.td(f'<span class="tag">{shape}</span>'),
+                       ui.td(f'<span class="dim">{need}</span>')], t["is_me"]))
+    H(ui.card("League", ui.table(
+        [("Team", 0), ("N", 1), ("Roster shape", 0), ("Needs", 0)], lrows),
+        "Who still needs what drives the agent's <b>Teams needing</b> column."))
 
-# ------------------------------------------------------------------ players
-with tabs[2]:
-    c1, c2 = st.columns([1, 3])
-    pf = c1.multiselect("Position", ["QB", "RB", "WR", "TE", "K", "D/ST"],
-                        placeholder="All positions", key="w_players_pos",
-                        label_visibility="collapsed")
-    pq = c2.text_input("Search", placeholder="Search players…", key="w_players_q",
-                       label_visibility="collapsed")
-    pqn = norm_name(pq) if pq else ""
-    rows = [([
-        ui.td(p.name), ui.td(ui.pill(p.pos, str(p.pos_rank))),
-        ui.td(p.tier, "num"), ui.td(f"{p.proj:.1f}", "num"),
-        ui.td(f"{p.vor:.1f}", "num"),
-        ui.td("—" if p.adp > 900 else f"{p.adp:.1f}", "num"),
-        ui.td(f'<span class="{"bad" if p.proj_spread > 35 else ""}">'
-              f'{p.proj_spread:.1f}</span>', "num"),
-        ui.td(f"{p.week_sd:.1f}", "num"),
-        ui.td(f'<span class="dim">{ui.num(p.actual_2025, 0)}</span>', "num"),
-        ui.td(p.bye or "—", "num"),
-        ui.td(ui.flag_html(p.flag, p.games_missed)),
-    ], False) for p in ranked
-        if (not pf or p.pos in pf) and (not pqn or pqn in norm_name(p.name))][:400]
-    H(ui.card("Player pool — ranked by value over replacement", ui.table(
-        [("Player", 0), ("Pos", 0), ("Tier", 1), ("Proj", 1), ("VOR", 1), ("ADP", 1),
-         ("Disagree", 1), ("SD/wk", 1), ("2025", 1), ("Bye", 1), ("Flag", 0)],
-        rows, scroll=True),
-        "<b>Disagree</b> is the gap between ESPN's and Sleeper's projections — a large "
-        "value means the sources genuinely disagree and the player is riskier than one "
-        "number suggests. <b>SD/wk</b> is measured from real 2022–2025 game logs."))
+# ---- research ------------------------------------------------------------
+if ss.selected:
+    p = by_name.get(norm_name(ss.selected))
+    if p:
+        d = dossier(p, repl)
+        head = (f'<div class="pz-why"><div style="font-size:16px;margin-bottom:6px">'
+                f'<b>{p.name}</b> &nbsp;{ui.pill(p.pos, str(p.pos_rank))} '
+                f'<span class="dim">{p.team} · bye {p.bye or "—"}</span>'
+                f'{ui.flag_html(p.flag, p.games_missed)}</div>')
+        for s in summary_lines(p, repl):
+            head += f"<div>{ui.md(s)}</div>"
+        head += "</div>"
 
-# ------------------------------------------------------------------ injuries
-with tabs[3]:
-    sev = {"SUSPENDED": 0, "IR": 1, "OUT": 1, "PUP": 2, "NFI": 2,
-           "Doubtful": 3, "Questionable": 4}
-    flagged = sorted([p for p in pool if (p.flag or p.games_missed) and p.adp < 900],
-                     key=lambda p: (0 if p.games_missed else 1, sev.get(p.flag, 5), p.adp))
-    rows = [([
-        ui.td(p.name), ui.td(ui.pill(p.pos)),
-        ui.td(f"{p.adp:.1f}", "num"),
-        ui.td(ui.flag_html(p.flag, p.games_missed) or '<span class="dim">—</span>'),
-        ui.td(p.games_missed or "", "num"),
-        ui.td(f'<span class="dim">{p.note or ""}</span>'),
-    ], bool(p.games_missed)) for p in flagged]
-    H(ui.card("Flagged players", ui.table(
-        [("Player", 0), ("Pos", 0), ("ADP", 1), ("Status", 0),
-         ("Games out", 1), ("Note", 0)], rows, scroll=True),
-        "No public feed reports <b>how many</b> games a suspension or injury costs — "
-        "only a status flag. Set it below and the projection is discounted pro-rata "
-        "everywhere in the app."))
-    with st.form("override"):
-        c1, c2, c3, c4 = st.columns([3, 1, 3, 1])
-        nm = c1.selectbox("Player", names, key="w_ov_name")
-        gm = c2.number_input("Games out", 0, 17, 0, key="w_ov_games")
-        note = c3.text_input("Reason", placeholder="e.g. 2-game suspension",
-                             key="w_ov_note")
-        c4.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
-        if c4.form_submit_button("Save", type="primary", use_container_width=True):
-            store.set_override(nm, int(gm), note) if gm > 0 else store.clear_override(nm)
-            load.clear()
-            st.rerun()
+        blocks = []
+        for title, rowset in d["blocks"]:
+            # Two columns, with the source stacked under the value. A third
+            # column for the source does not fit inside a grid track and gets
+            # clipped off the right edge.
+            rows = [([ui.td(lab, "wrap-label"),
+                      ui.td(f'{val}<div class="tag" style="margin-top:2px">'
+                            f'{d["sources"][src][0]}</div>', "num")], False)
+                    for lab, val, src in rowset]
+            blocks.append(f'<div class="pz-h" style="margin-top:0">{title}</div>'
+                          + ui.table([("", 0), ("Value / source", 1)], rows))
+        body = head + ui.cols(blocks, min_px=300)
 
-# ------------------------------------------------------------------ draft sim
-with tabs[4]:
-    c1, c2 = st.columns([3, 1])
-    n = c1.select_slider("Drafts to simulate", [50, 100, 250, 500], value=250,
-                         key="w_dsim_n")
-    if c2.button("▶ Run draft simulation", type="primary",
-                 use_container_width=True, key="w_dsim"):
-        with st.spinner("Drafting…"):
-            r = simulate(pool, ss.slot, n_sims=n, repl_pts=repl, waiver=waiver)
-            store.save_run("draft", {"my_slot": ss.slot, "n_sims": n}, r)
-            ss.dsim = r
-    if ss.get("dsim"):
-        r = ss.dsim
-        H(ui.stats([("Mean starting lineup", r["mean_starting_points"], "", True),
-                    ("10th–90th percentile", f'{r["p10"]}–{r["p90"]}', "", False),
-                    ("Drafts simulated", r["n_sims"], "", False)]))
-        rows = [([ui.td(f'<span class="tag">#{pk}</span>'),
-                  ui.td(" · ".join(f'{nm} <span class="dim">'
-                                   f'{round(100 * ct / r["n_sims"])}%</span>'
-                                   for nm, ct in opts[:4]), "wrap")], False)
-                for pk, opts in r["pick_frequency"].items()]
-        H(ui.card("Who you end up with, by pick",
-                  ui.table([("Pick", 0), ("Most likely selections", 0)], rows)))
+        if d["game_log"]:
+            g = d["game_log"]
+            grows = [([ui.td(f'<span class="tag">W{x["week"]}</span>'),
+                       ui.td(f'<span class="dim">{x["opp"] or ""}</span>'),
+                       ui.td(f'{x["pts"]:.1f}', "num"),
+                       ui.td(f'{x["targets"]:.0f}' if x["targets"] else "", "num"),
+                       ui.td(f'{x["carries"]:.0f}' if x["carries"] else "", "num"),
+                       ui.td(f'{x["rec_yds"]+x["rush_yds"]+x["pass_yds"]:.0f}', "num"),
+                       ui.td(f'{x["tds"]:.0f}' if x["tds"] else "", "num")], x["pts"] >= 20)
+                     for x in g]
+            body += ('<div class="pz-h">2025 game by game '
+                     '<span class="dim" style="text-transform:none;letter-spacing:0">'
+                     '— highlighted rows are 20+ point weeks · source: nflverse game logs'
+                     '</span></div>' + ui.table(
+                [("Wk", 0), ("Opp", 0), ("Pts", 1), ("Tgt", 1), ("Car", 1), ("Yds", 1), ("TD", 1)],
+                grows, scroll=True))
 
-# ------------------------------------------------------------------ season sim
-with tabs[5]:
-    c1, c2, c3 = st.columns([2, 1.4, 1.2])
-    n = c1.select_slider("Seasons to simulate", [200, 500, 1000], value=500,
-                         key="w_ssim_n")
-    use_mine = c2.checkbox("Use my drafted roster", value=bool(ss.mine), key="w_ssim_mine")
-    if c3.button("▶ Run season simulation", type="primary",
-                 use_container_width=True, key="w_ssim"):
-        with st.spinner("Playing seasons…"):
-            mp = [by_name[x] for x in ss.mine if x in by_name] if use_mine else None
-            rosters = build_league(pool, ss.slot, my_players=mp,
-                                   repl_pts=repl, waiver=waiver)
-            r = simulate_season(rosters, ss.slot, n_sims=n)
-            store.save_run("season", {"my_slot": ss.slot, "n_sims": n}, r)
-            ss.ssim = r
-    if ss.get("ssim"):
-        r = ss.ssim
-        me = next(t for t in r["teams"] if t["is_me"])
-        H(ui.stats([
-            ("My title odds", f'{me["title_odds"] * 100:.1f}%', "baseline 10%", True),
-            ("My playoff odds", f'{me["playoff_odds"] * 100:.1f}%',
-             f'expected record {me["exp_wins"]}–{14 - me["exp_wins"]:.1f}', False),
-            ("My weekly score", r["my_weekly"]["mean"],
-             f'{r["my_weekly"]["p10"]}–{r["my_weekly"]["p90"]} typical', False)]))
-        mx = max(t["title_odds"] for t in r["teams"]) or 1
-        rows = [([
-            ui.td(f'<b>{t["team"]}</b>' if t["is_me"] else t["team"]),
-            ui.td(f'<span class="dim">{t["division"] or ""}</span>'),
-            ui.td(f'{t["exp_wins"]:.2f}', "num"), ui.td(f'{t["exp_points"]:.0f}', "num"),
-            ui.td(f'{t["playoff_odds"] * 100:.0f}%', "num"),
-            ui.td(f'<b>{t["title_odds"] * 100:.1f}%</b>', "num"),
-            ui.td(ui.bar(t["title_odds"] / mx)),
-        ], t["is_me"]) for t in r["teams"]]
-        H(ui.card("Final standings odds", ui.table(
-            [("Team", 0), ("Div", 0), ("Wins", 1), ("Points", 1),
-             ("Playoffs", 1), ("Title", 1), ("", 0)], rows),
-            "The other nine teams are drafted by the ADP model, so these odds measure "
-            "your roster against <i>simulated</i> opponents. Directional, not literal."))
+        H(ui.card(f"Research — {p.name}", body,
+                  "Every row names the feed it came from. Nothing here is an opinion: "
+                  "projections are vendor numbers rescored under your league's rules, and "
+                  "the 2025 figures are measured from actual game logs."))
+
+        a1, a2, a3 = st.columns([1, 1, 3])
+        if a1.button(f"＋ Draft {p.name}", type="primary", use_container_width=True, key="w_take_me"):
+            live.add(p.name, live.my_slot); ss.selected = None; st.rerun()
+        if a2.button("✕ Taken by another", use_container_width=True, key="w_take_other"):
+            slot = ss.get("assign_to_slot") or live.on_the_clock
+            if slot == live.my_slot:
+                slot = next((s for s in range(1, N_TEAMS + 1) if s != live.my_slot), 1)
+            live.add(p.name, slot); ss.selected = None; st.rerun()
