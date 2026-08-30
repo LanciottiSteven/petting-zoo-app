@@ -149,6 +149,26 @@ def lineup_with_replacement(players, repl_pts, waiver=None) -> float:
     return total
 
 
+# A bye-week collision costs you real points: two starters idle in the same week
+# means two replacement-level fill-ins. Priced per extra colliding starter, in
+# season points, so it competes on the same scale as everything else.
+BYE_COLLISION_COST = 7.0
+
+
+def bye_penalty(players) -> float:
+    """Points lost to starters sharing a bye. Only collisions beyond the first
+    player in a given week count — one player on bye is unavoidable."""
+    if not players:
+        return 0.0
+    _, starters = optimal_lineup(players)
+    weeks: dict[int, int] = {}
+    for p in starters:
+        if p.pos in ("K", "D/ST") or not p.bye:
+            continue
+        weeks[p.bye] = weeks.get(p.bye, 0) + 1
+    return BYE_COLLISION_COST * sum(max(0, n - 1) for n in weeks.values())
+
+
 # Weight on raw VOR, which keeps late picks sensible once the lineup is full
 # (marginal starter value is ~0 for every bench body, but depth still matters
 # for byes and the ~3 games the average starter misses).
@@ -156,8 +176,10 @@ DEPTH_WEIGHT = 0.22
 
 
 def marginal_value(roster, cand, repl_pts, waiver=None) -> float:
-    base = lineup_with_replacement(roster.players, repl_pts, waiver)
-    after = lineup_with_replacement(roster.players + [cand], repl_pts, waiver)
+    base = (lineup_with_replacement(roster.players, repl_pts, waiver)
+            - bye_penalty(roster.players))
+    after = (lineup_with_replacement(roster.players + [cand], repl_pts, waiver)
+             - bye_penalty(roster.players + [cand]))
     # Bench depth only pays at flex-eligible positions. A backup QB, K or D/ST
     # is a wasted bench spot in a 10-team league -- waiver QBs project ~220.
     depth = DEPTH_WEIGHT if cand.pos in FLEX_ELIGIBLE else 0.0

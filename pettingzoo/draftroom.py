@@ -14,7 +14,8 @@ from .league import (N_TEAMS, ROSTER_SIZE, STARTERS, TEAM_NAMES, MY_TEAM_NAME,
                      slot_for_pick, snake_pick_numbers, FLEX_ELIGIBLE,
                      DRAFT_ORDER, MY_SLOT)
 from .draft import (Roster, optimal_lineup, marginal_value, recommend,
-                    STARTER_TARGET, ROSTER_CAP, lineup_with_replacement)
+                    STARTER_TARGET, ROSTER_CAP, lineup_with_replacement,
+                    bye_penalty)
 from .advisor import forward_scan, detect_runs, TRACKED
 from .pool import norm_name
 
@@ -242,6 +243,25 @@ def agent(pool, live: LiveDraft, repl_pts, waiver, n_sims: int = 110,
     }
 
 
+def _slot_story(cand_pos, roster, by_name) -> str:
+    """
+    Say plainly what this pick does to the lineup. Without this the agent reads
+    like autodraft — it names a winner but never explains that a third running
+    back only upgrades your flex while quarterback is an empty starting slot.
+    """
+    have = roster.count(cand_pos)
+    need = STARTER_TARGET.get(cand_pos, 0)
+    if have < need:
+        n = need - have
+        return (f"it fills an empty starting {cand_pos} slot"
+                + (f" (you still need {n})" if n > 1 else ""))
+    if cand_pos in FLEX_ELIGIBLE:
+        return (f"your {cand_pos} starters are set, so this upgrades the FLEX"
+                if have == need else
+                f"you already have {have} {cand_pos}s — this is flex or bench depth")
+    return f"you already have your starting {cand_pos}"
+
+
 def _rationale(picks, positions, runs, live, by_name, demand, roster) -> list[str]:
     out = []
     if not picks:
@@ -257,19 +277,29 @@ def _rationale(picks, positions, runs, live, by_name, demand, roster) -> list[st
     line += "."
     out.append(line)
 
-    second = picks[1] if len(picks) > 1 else None
-    if second:
-        gap = abs(second.get("cost_vs_best") or 0)
+    # why THIS position and not the obvious alternative
+    out.append(f"Roster logic: {_slot_story(top['pos'], roster, by_name)}.")
+    other = next((r for r in picks[1:] if r["pos"] != top["pos"]), None)
+    if other:
+        gap = abs(other.get("cost_vs_best") or 0)
+        story = _slot_story(other["pos"], roster, by_name)
         if gap < 4:
-            out.append(f"It is close — {second['name']} costs only {gap:.1f} points, "
-                       f"so either is defensible.")
+            out.append(f"Nearly a coin flip with {other['name']} ({other['pos']}), where "
+                       f"{story} — only {gap:.1f} points between them, so take the one you "
+                       f"believe in.")
         else:
-            out.append(f"Clear enough: the next option, {second['name']}, gives up "
-                       f"{gap:.1f} projected points across the rest of the draft.")
+            out.append(f"The best {other['pos']} left, {other['name']}, is {gap:.1f} points "
+                       f"behind: {story}.")
+    same = next((r for r in picks[1:] if r["pos"] == top["pos"]), None)
+    if same:
+        out.append(f"Next best at the same position is {same['name']} "
+                   f"({abs(same.get('cost_vs_best') or 0):.1f} behind).")
 
     live_pos = [r for r in positions if r["urgency"] is not None]
+    pressure_pos = None
     if live_pos:
         u = live_pos[0]
+        pressure_pos = u["pos"]
         bits = []
         if u["decay"] >= 12:
             bits.append(f"the best {u['pos']} left drops about {u['decay']:.0f} points "
@@ -285,7 +315,11 @@ def _rationale(picks, positions, runs, live, by_name, demand, roster) -> list[st
         if bits:
             out.append(f"{u['pos']} is the pressure point: " + "; ".join(bits) + ".")
 
-    safe = [r for r in live_pos if r["decay"] < 8 and r["left_above_repl"] >= 8]
+    # never list the pressure point as safe to wait on — saying "TE is the
+    # pressure point" and "you can wait on TE" in the same breath is nonsense
+    safe = [r for r in live_pos
+            if r["decay"] < 8 and r["left_above_repl"] >= 8
+            and r["pos"] != pressure_pos and not r["teams_needing"]]
     if safe:
         out.append("You can wait on " + ", ".join(
             f"{r['pos']} (best one only falls {r['decay']:.0f} pts, "
@@ -303,6 +337,16 @@ def _rationale(picks, positions, runs, live, by_name, demand, roster) -> list[st
     if must and left <= len(must) + 1:
         out.append(f"⚠︎ Roster warning: still missing {', '.join(must)} with only "
                    f"{left} picks left. Fill required slots now.")
+
+    # bye stacking is easy to miss by eye and costs real starts
+    cand = by_name.get(norm_name(top["name"]))
+    if cand is not None:
+        before = bye_penalty(roster.players)
+        after = bye_penalty(roster.players + [cand])
+        if after > before:
+            out.append(f"⚠︎ Bye clash: {top['name']} is on bye week {cand.bye}, same as a "
+                       f"starter you already hold — costs roughly {after - before:.0f} points "
+                       f"of replacement-level starts that week.")
 
     if top.get("flag"):
         out.append(f"⚠︎ {top['name']} is flagged **{top['flag']}** — confirm his status "
