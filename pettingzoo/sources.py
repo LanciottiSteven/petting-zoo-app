@@ -168,6 +168,27 @@ def fetch_schedule(force: bool = False) -> list[dict]:
     return list(csv.DictReader(blob.decode().splitlines()))
 
 
+def fetch_injuries(season: int = SEASON - 1, force: bool = False) -> list[dict]:
+    """Weekly NFL injury reports. This is the only open feed that says how many
+    games a player actually missed, which no projection source reports."""
+    name = f"injuries_{season}.csv"
+    if not force and _cache_path(name).exists():
+        return list(csv.DictReader(_cache_path(name).read_text().splitlines()))
+    blob = _get(f"{NFLVERSE}/injuries/injuries_{season}.csv", timeout=180)
+    _write(name, blob)
+    return list(csv.DictReader(blob.decode().splitlines()))
+
+
+def fetch_snap_counts(season: int = SEASON - 1, force: bool = False) -> list[dict]:
+    """Per-game offensive snap share — how secure a player's role actually was."""
+    name = f"snap_counts_{season}.csv"
+    if not force and _cache_path(name).exists():
+        return list(csv.DictReader(_cache_path(name).read_text().splitlines()))
+    blob = _get(f"{NFLVERSE}/snap_counts/snap_counts_{season}.csv", timeout=180)
+    _write(name, blob)
+    return list(csv.DictReader(blob.decode().splitlines()))
+
+
 def fetch_playerids(force: bool = False) -> list[dict]:
     name = "db_playerids.csv"
     if _use_cache(name, force):
@@ -196,6 +217,8 @@ def bye_weeks(schedule: list[dict], season: int = SEASON) -> dict[str, int]:
 
 REFRESHERS = {
     "espn": fetch_espn,
+    "injuries": fetch_injuries,
+    "snap_counts": fetch_snap_counts,
     "sleeper_players": fetch_sleeper_players,
     "sleeper_projections": fetch_sleeper_projections,
     "ffc_adp": fetch_ffc_adp,

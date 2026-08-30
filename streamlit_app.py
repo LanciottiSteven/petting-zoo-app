@@ -19,6 +19,8 @@ from pettingzoo.valuation import compute_valuation, waiver_levels
 from pettingzoo.draft import optimal_lineup
 from pettingzoo.draftroom import LiveDraft, agent, STARTER_SLOTS
 from pettingzoo.research import dossier, summary_lines
+from pettingzoo.mock import build_plan
+from pettingzoo.report import build_pdf
 from pettingzoo.league import (LEAGUE_NAME, MY_TEAM_NAME, N_TEAMS, ROSTER_SIZE,
                                DRAFT_DATE, TEAM_NAMES, DRAFT_ORDER, MY_SLOT,
                                snake_pick_numbers)
@@ -160,6 +162,52 @@ if not live.started:
                            seat == live.my_slot))
     H(ui.card("Draft order",
               ui.table([("Seat", 0), ("Manager", 0), ("First picks", 0)], order_rows)))
+
+    st.divider()
+    m1, m2, m3 = st.columns([1.5, 1, 1.2])
+    mock_seat = m1.selectbox(
+        "Generate a mock draft plan for", list(DRAFT_ORDER),
+        index=live.my_slot - 1,
+        format_func=lambda s: f"Seat {s} — {DRAFT_ORDER[s]}"
+                              + (" (you)" if s == live.my_slot else ""),
+        key="w_mockseat")
+    n_boards = m2.select_slider("Boards", [12, 24, 40, 60], value=24, key="w_mockn")
+    m3.markdown('<div style="height:28px"></div>', unsafe_allow_html=True)
+    if m3.button("📄 Generate Mock Team", type="primary", use_container_width=True,
+                 key="w_mockgo"):
+        with st.spinner(f"Playing {n_boards} drafts from seat {mock_seat}…"):
+            plan = build_plan(pool, mock_seat, repl, waiver, n_boards=n_boards)
+            ss.mock = (mock_seat, plan, build_pdf(plan, seat_label=DRAFT_ORDER.get(mock_seat)))
+
+    if ss.get("mock"):
+        seat, plan, pdf = ss.mock
+        st.download_button(
+            f"⬇ Download draft plan — seat {seat}, {DRAFT_ORDER.get(seat)} (PDF)",
+            data=pdf, file_name=f"petting-zoo-draft-plan-seat{seat}.pdf",
+            mime="application/pdf", use_container_width=True, key="w_mockdl")
+        shape = " · ".join(f"{v} {k}" for k, v in sorted(plan["roster_shape"].items()))
+        rows = []
+        for r in plan["rounds"]:
+            pr = r["primary"]; pl = pr["player"]
+            bu = "<br>".join(
+                f'<span class="dim">{b["player"].name} ({b["player"].pos}) '
+                f'· {b["seen_pct"]}% · {b["why"]}</span>' for b in r["backups"][:2])
+            rows.append(([
+                ui.td(f'<span class="tag">R{r["round"]}</span><br>'
+                      f'<span class="dim" style="font-size:10px">pick {r["pick"]}</span>'),
+                ui.td(f'{ui.pill(pl.pos)} <b>{pl.name}</b>'
+                      f'<div class="dim" style="font-size:11px">{pl.team} · '
+                      f'{pl.proj:.0f} proj</div>'),
+                ui.td(f'{pr["seen_pct"]}%', "num"),
+                ui.td(f'{pr["why"]}<div style="margin-top:4px">{bu}</div>', "wrap"),
+            ], False))
+        H(ui.card(f"Mock plan — seat {seat}, {DRAFT_ORDER.get(seat)}",
+                  ui.table([("Round", 0), ("Primary target", 0), ("Avail", 1),
+                            ("Reasoning, then backups", 0)], rows, scroll=True),
+                  f"Median of {plan['n_boards']} simulated drafts · finished lineup "
+                  f"{plan['projected_points']:.0f} pts (range {plan['spread'][0]:.0f}–"
+                  f"{plan['spread'][1]:.0f}) · roster {shape}. <b>Avail</b> is how often that "
+                  f"player was still there at that pick — under 40% means plan on the backup."))
 
     top = ranked[:12]
     rows = [([ui.td(f"{i}"), ui.td(f"<b>{p.name}</b>{ui.flag_html(p.flag, p.games_missed)}"),

@@ -22,6 +22,8 @@ SOURCES = {
     "espn": ("ESPN Fantasy API", "lm-api-reads.fantasy.espn.com"),
     "sleeper": ("Sleeper API", "api.sleeper.app"),
     "nflverse": ("nflverse game logs", "github.com/nflverse/nflverse-data"),
+    "injuries": ("NFL injury reports (nflverse)", "github.com/nflverse/nflverse-data"),
+    "snaps": ("NFL snap counts (nflverse)", "github.com/nflverse/nflverse-data"),
     "ffc": ("Fantasy Football Calculator", "fantasyfootballcalculator.com"),
     "derived": ("Computed by this app", "league scoring applied to the above"),
 }
@@ -63,6 +65,57 @@ def _f(v):
         return float(v or 0)
     except (TypeError, ValueError):
         return 0.0
+
+
+@lru_cache(maxsize=1)
+def _durability(season: int = 2025) -> dict[str, dict]:
+    """Weeks a player appeared on the injury report, and how many he was ruled
+    out of. Projection feeds give a games-played assumption; this is what
+    actually happened."""
+    out: dict[str, dict] = {}
+    try:
+        rows = S.fetch_injuries(season)
+    except Exception:
+        return out
+    for r in rows:
+        nm = norm_name(r.get("full_name") or "")
+        if not nm:
+            continue
+        d = out.setdefault(nm, {"weeks_listed": 0, "weeks_out": 0, "issues": set()})
+        d["weeks_listed"] += 1
+        if (r.get("report_status") or "").lower() == "out":
+            d["weeks_out"] += 1
+        inj = (r.get("report_primary_injury") or "").strip()
+        if inj:
+            d["issues"].add(inj)
+    for d in out.values():
+        d["issues"] = sorted(d["issues"])[:4]
+    return out
+
+
+@lru_cache(maxsize=1)
+def _snap_share(season: int = 2025) -> dict[str, dict]:
+    """Average offensive snap share — a direct read on role security."""
+    acc: dict[str, list[float]] = {}
+    try:
+        rows = S.fetch_snap_counts(season)
+    except Exception:
+        return {}
+    for r in rows:
+        # regular season only, to stay consistent with every other 2025 figure
+        # here (playoff games were inflating the game counts)
+        if r.get("game_type") not in (None, "", "REG"):
+            continue
+        nm = norm_name(r.get("player") or "")
+        try:
+            pct = float(r.get("offense_pct") or 0)
+        except ValueError:
+            continue
+        if nm and pct > 0:
+            acc.setdefault(nm, []).append(pct)
+    return {k: {"games": len(v), "avg": round(100 * sum(v) / len(v)),
+                "best": round(100 * max(v))}
+            for k, v in acc.items() if v}
 
 
 @lru_cache(maxsize=1)
@@ -170,8 +223,18 @@ def dossier(player, repl_pts: dict | None = None) -> dict:
     blocks.append(("Market signal", mkt))
 
     # -- situation -----------------------------------------------------
+    dur = _durability().get(norm_name(player.name))
+    snaps = _snap_share().get(norm_name(player.name))
     sit = [("Team / position", f"{player.team} {player.pos}", "espn"),
            ("Bye week", str(player.bye or "—"), "nflverse")]
+    if snaps:
+        sit.append(("2025 snap share", f"{snaps['avg']}% avg, {snaps['best']}% peak "
+                                       f"({snaps['games']} games)", "snaps"))
+    if dur:
+        sit.append(("2025 weeks ruled out", str(dur["weeks_out"]), "injuries"))
+        sit.append(("2025 weeks on report", str(dur["weeks_listed"]), "injuries"))
+        if dur["issues"]:
+            sit.append(("2025 reported issues", ", ".join(dur["issues"]), "injuries"))
     if player.depth_chart_order:
         sit.append(("Depth chart", f"#{player.depth_chart_order} at his spot", "sleeper"))
     if player.injury_status:
@@ -217,6 +280,19 @@ def summary_lines(player, repl_pts: dict | None = None) -> list[str]:
     elif player.actual_2025 is None:
         out.append("No 2025 NFL production to check — a rookie or a player who "
                    "missed the year, so the projection is the only evidence.")
+
+    snaps = _snap_share().get(norm_name(player.name))
+    dur = _durability().get(norm_name(player.name))
+    if snaps and snaps["games"] >= 6:
+        if snaps["avg"] >= 70:
+            out.append(f"Workhorse role: **{snaps['avg']}% of snaps** across "
+                       f"{snaps['games']} games in 2025.")
+        elif snaps["avg"] <= 45:
+            out.append(f"Rotational: only **{snaps['avg']}% of snaps** in 2025 — "
+                       f"his floor depends on that share growing.")
+    if dur and dur["weeks_out"] >= 3:
+        out.append(f"⚠︎ Durability: ruled **out of {dur['weeks_out']} games** in 2025"
+                   + (f" ({', '.join(dur['issues'][:2])})." if dur["issues"] else "."))
 
     if player.proj_spread and player.proj_spread > 35:
         hi, lo = max(player.proj_espn or 0, player.proj_sleeper or 0), \

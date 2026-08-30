@@ -38,6 +38,18 @@ One screen. Hit **Initiate Draft** and the room opens:
 | Fantasy Football Calculator | mock-draft ADP **with per-player standard deviation** | ~12h cache |
 | nflverse | 2020–2025 game logs, 2026 schedule, Vegas lines | daily |
 | DynastyProcess | player ID crosswalk | daily |
+| nflverse injuries | 2025 weekly injury reports — how many games a player was actually ruled out of | daily |
+| nflverse snap counts | 2025 offensive snap share — role security | daily |
+
+### Sources deliberately not used
+
+- **Yahoo Fantasy** needs OAuth for anything useful; the public endpoints return
+  scores, not fantasy projections.
+- **NFL.com** returns 401 without a partner key.
+- **FantasyPros** gates its data: the API needs a key, and the public projection
+  pages serve only ~10 rows to a non-JS client. Scraping it would be both partial
+  and against the grain. Their free API tier is the honest route if you want
+  expert-consensus rankings — it needs a signup, not a payment.
 
 ### Data freshness
 
