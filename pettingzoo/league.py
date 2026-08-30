@@ -63,6 +63,24 @@ LOGO_NUMBERS = {
 # the league manager and is not published anywhere the app can read.
 USE_LOGO_AS_DRAFT_ORDER = False
 
+# Draft order, from the LM's randomiser (SORT(SEQUENCE(10), RANDARRAY(10))).
+# These are the managers' first names, which is how Steven refers to them at the
+# table; the ESPN team names in DIVISIONS above cannot be mapped onto them
+# reliably, so they are deliberately kept separate rather than guessed.
+DRAFT_ORDER = {
+    1: "conor",
+    2: "Alexander",
+    3: "Keaon",
+    4: "Eric",
+    5: "Steven",        # us — How's the wife?
+    6: "Nick",
+    7: "Justin",
+    8: "Peter",
+    9: "Dan",
+    10: "Nes",
+}
+MY_SLOT = 5
+
 LOGO_PATH = "web/assets/logo.png"
 LOGO_SMALL_PATH = "web/assets/logo-sm.png"
 

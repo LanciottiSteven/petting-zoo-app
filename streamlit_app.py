@@ -20,7 +20,8 @@ from pettingzoo.draft import optimal_lineup
 from pettingzoo.draftroom import LiveDraft, agent, STARTER_SLOTS
 from pettingzoo.research import dossier, summary_lines
 from pettingzoo.league import (LEAGUE_NAME, MY_TEAM_NAME, N_TEAMS, ROSTER_SIZE,
-                               DRAFT_DATE, TEAM_NAMES)
+                               DRAFT_DATE, TEAM_NAMES, DRAFT_ORDER, MY_SLOT,
+                               snake_pick_numbers)
 
 ASSETS = Path(__file__).resolve().parent / "pettingzoo" / "web" / "assets"
 st.set_page_config(page_title="The Petting Zoo — Draft Room",
@@ -44,7 +45,7 @@ ranked = sorted([p for p in pool if p.proj > 0], key=lambda p: -p.vor)
 
 ss = st.session_state
 if "live" not in ss:
-    ss.live = LiveDraft(my_slot=int(store.get_setting("my_draft_slot") or 1))
+    ss.live = LiveDraft(my_slot=int(store.get_setting("my_draft_slot") or MY_SLOT))
 live: LiveDraft = ss.live
 ss.setdefault("selected", None)
 ss.setdefault("agent_cache", {})
@@ -100,16 +101,12 @@ with st.sidebar:
         live.my_slot = slot
         store.set_setting("my_draft_slot", slot)
         H(f'<div class="tag">picks {", ".join(map(str, live.my_picks[:7]))} …</div>')
-        with st.expander("Name the other seats (optional)"):
-            st.caption("Only matters for reading the league table; seat order is "
-                       "set by your LM and is not published anywhere.")
-            others = [t for t in TEAM_NAMES if t != MY_TEAM_NAME]
+        with st.expander("Seat order"):
+            st.caption("From your LM's randomiser. Edit if anyone swaps.")
             for s in range(1, N_TEAMS + 1):
-                if s == live.my_slot:
-                    continue
                 live.seat_names[s] = st.text_input(
-                    f"Seat {s}", value=live.seat_names.get(s, ""),
-                    placeholder=others[(s - 1) % len(others)], key=f"seat_{s}")
+                    f"Seat {s}" + ("  ← you" if s == live.my_slot else ""),
+                    value=live.seat_names.get(s, ""), key=f"seat_{s}")
     else:
         H(f'<div class="tag">your slot {live.my_slot} · picks '
           f'{", ".join(str(p) for p in live.my_picks if p >= live.pick_no)[:34]}…</div>')
@@ -150,6 +147,19 @@ if not live.started:
                      key="w_start"):
             live.started = True
             st.rerun()
+
+    order_rows = []
+    for seat, mgr in DRAFT_ORDER.items():
+        first4 = ", ".join(str(x) for x in snake_pick_numbers(seat)[:4])
+        who = f"<b>{mgr}</b>"
+        if seat == live.my_slot:
+            who += f' &nbsp;<span class="dim">— {MY_TEAM_NAME}</span>'
+        order_rows.append(([ui.td(f'<span class="tag">{seat}</span>'),
+                            ui.td(who),
+                            ui.td(f'<span class="dim">picks {first4}…</span>')],
+                           seat == live.my_slot))
+    H(ui.card("Draft order",
+              ui.table([("Seat", 0), ("Manager", 0), ("First picks", 0)], order_rows)))
 
     top = ranked[:12]
     rows = [([ui.td(f"{i}"), ui.td(f"<b>{p.name}</b>{ui.flag_html(p.flag, p.games_missed)}"),

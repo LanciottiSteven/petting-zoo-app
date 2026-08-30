@@ -11,7 +11,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from .league import (N_TEAMS, ROSTER_SIZE, STARTERS, TEAM_NAMES, MY_TEAM_NAME,
-                     slot_for_pick, snake_pick_numbers, FLEX_ELIGIBLE)
+                     slot_for_pick, snake_pick_numbers, FLEX_ELIGIBLE,
+                     DRAFT_ORDER, MY_SLOT)
 from .draft import (Roster, optimal_lineup, marginal_value, recommend,
                     STARTER_TARGET, ROSTER_CAP, lineup_with_replacement)
 from .advisor import forward_scan, detect_runs, TRACKED
@@ -29,14 +30,14 @@ class Pick:
 
 @dataclass
 class LiveDraft:
-    my_slot: int = 1
+    my_slot: int = MY_SLOT
     n_teams: int = N_TEAMS
     roster_size: int = ROSTER_SIZE
     started: bool = False
     picks: list[Pick] = field(default_factory=list)
     # seat -> manager name; seat order is unknown until the LM posts it, so the
     # user labels seats themselves and we only pin our own.
-    seat_names: dict[int, str] = field(default_factory=dict)
+    seat_names: dict[int, str] = field(default_factory=lambda: dict(DRAFT_ORDER))
 
     # ---------------------------------------------------------------- basics
     @property
@@ -77,7 +78,7 @@ class LiveDraft:
     def name_for(self, slot: int) -> str:
         if slot == self.my_slot:
             return MY_TEAM_NAME
-        return self.seat_names.get(slot) or f"Team {slot}"
+        return self.seat_names.get(slot) or f"Seat {slot}"
 
     def taken_names(self) -> list[str]:
         return [p.player for p in self.picks]
