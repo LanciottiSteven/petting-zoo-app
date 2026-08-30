@@ -225,8 +225,54 @@ def agent(pool, live: LiveDraft, repl_pts, waiver, n_sims: int = 110,
         })
     positions.sort(key=lambda r: (r["urgency"] is None, -(r["urgency"] or -1e9)))
 
+    # ---- explicit two-pick opportunity cost -----------------------------
+    # The rollout already prices this implicitly, but the comparison a drafter
+    # actually wants to see is: take the WR now and I get THIS back at RB next
+    # turn, versus take the RB now and I get THIS back at WR. Same two picks,
+    # different order — the difference is the real cost of the choice.
+    surv_mean = {}
+    for pos, vals in (scan.get("survivors") or {}).items():
+        if vals:
+            surv_mean[pos] = sum(vals) / len(vals)
+    best_now = {}
+    for p in board:
+        if p.pos not in best_now or p.proj > best_now[p.pos].proj:
+            best_now[p.pos] = p
+
+    pairs = []
+    if nxt and surv_mean:
+        seen_pos = []
+        for r in picks:
+            if r["pos"] not in seen_pos:
+                seen_pos.append(r["pos"])
+        for i, pa in enumerate(seen_pos):
+            for pb in seen_pos[i + 1:]:
+                A, B = best_now.get(pa), best_now.get(pb)
+                if not A or not B or pa not in surv_mean or pb not in surv_mean:
+                    continue
+                # take A now, best B later  vs  take B now, best A later
+                path_a = A.proj + surv_mean[pb]
+                path_b = B.proj + surv_mean[pa]
+                pairs.append({
+                    "a": A.name, "a_pos": pa, "a_proj": A.proj,
+                    "b": B.name, "b_pos": pb, "b_proj": B.proj,
+                    "b_later": round(surv_mean[pb], 1),
+                    "a_later": round(surv_mean[pa], 1),
+                    "path_a": round(path_a, 1), "path_b": round(path_b, 1),
+                    "edge": round(path_a - path_b, 1),
+                })
+        # The decision in front of you is between the top recommendation and the
+        # best option at a rival position — surface that first, not merely the
+        # largest gap on the board.
+        top_pos = picks[0]["pos"] if picks else None
+        pairs.sort(key=lambda d: (0 if top_pos in (d["a_pos"], d["b_pos"]) else 1,
+                                  -abs(d["edge"])))
+
     runs = detect_runs(pool, taken)
     rationale = _rationale(picks, positions, runs, live, by_name, demand, roster)
+    opp = _opportunity_line(pairs)
+    if opp:
+        rationale.insert(2 if len(rationale) > 2 else len(rationale), opp)
     alts = _alternatives(picks, positions, demand, by_name)
 
     return {
@@ -238,6 +284,7 @@ def agent(pool, live: LiveDraft, repl_pts, waiver, n_sims: int = 110,
         "runs": runs,
         "rationale": rationale,
         "alternatives": alts,
+        "opportunity": pairs[:4],
         "my_needs": my_needs,
         "lineup_points": optimal_lineup(my_players)[0] if my_players else 0.0,
     }
@@ -260,6 +307,21 @@ def _slot_story(cand_pos, roster, by_name) -> str:
                 if have == need else
                 f"you already have {have} {cand_pos}s — this is flex or bench depth")
     return f"you already have your starting {cand_pos}"
+
+
+def _opportunity_line(pairs) -> str | None:
+    if not pairs:
+        return None
+    d = pairs[0]
+    if abs(d["edge"]) < 2:
+        return (f"Two-pick view: {d['a']} now + ~{d['b_later']:.0f} pts at "
+                f"{d['b_pos']} next turn is worth about the same as {d['b']} now + "
+                f"~{d['a_later']:.0f} at {d['a_pos']} — no real opportunity cost either way.")
+    win, lose = ("a", "b") if d["edge"] > 0 else ("b", "a")
+    return (f"Two-pick view: taking **{d[win]}** ({d[win + '_pos']}) now and the best "
+            f"{d[lose + '_pos']} left at your next turn (~{d[lose + '_later']:.0f} pts) beats the "
+            f"reverse order by **{abs(d['edge']):.0f} points** — because "
+            f"{d[lose + '_pos']} holds up better than {d[win + '_pos']} over those picks.")
 
 
 def _rationale(picks, positions, runs, live, by_name, demand, roster) -> list[str]:

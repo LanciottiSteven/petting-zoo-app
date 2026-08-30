@@ -90,9 +90,14 @@ def optimal_lineup(players):
 
 
 def _eligible(available, needs, taken, horizon=None):
-    """Need-eligible players. `available` is ADP-sorted, so `horizon` takes the
-    top N by ADP -- nobody drafts the 300th-ranked player at pick 30, and
-    scanning the whole board was costing ~10x in the rollouts."""
+    """
+    Need-eligible players. `available` is ADP-sorted, so `horizon` takes the top
+    N by ADP -- nobody drafts the 300th-ranked player at pick 30.
+
+    `taken` is a set of ids skipped INLINE. Rebuilding a filtered list before
+    every pick was the single biggest cost in the rollouts: ~1000 id() lookups
+    per pick, 130 picks per rollout, hundreds of rollouts.
+    """
     out = []
     for p in available:
         if taken and id(p) in taken:
@@ -105,13 +110,14 @@ def _eligible(available, needs, taken, horizon=None):
     return out
 
 
-def opponent_pick(available, roster, pick_no, rng, noise=1.0):
+def opponent_pick(available, roster, pick_no, rng, noise=1.0, used=None):
     """Draw a pick by perturbing ADP by each player's own measured stdev."""
     rd = (pick_no - 1) // N_TEAMS + 1
     needs = roster.needs(rd)
-    cands = _eligible(available, needs, None, horizon=OPPONENT_HORIZON)
+    cands = _eligible(available, needs, used, horizon=OPPONENT_HORIZON)
     if not cands:
-        cands = [(p, 1.0) for p in available[:OPPONENT_HORIZON]]
+        cands = [(p, 1.0) for p in available
+                 if not used or id(p) not in used][:OPPONENT_HORIZON]
     best, best_score = None, 1e18
     for p, w in cands:
         adp = p.adp if p.adp < 900 else 250.0
@@ -123,7 +129,7 @@ def opponent_pick(available, roster, pick_no, rng, noise=1.0):
     return best
 
 
-def lineup_with_replacement(players, repl_pts, waiver=None) -> float:
+def lineup_with_replacement(players, repl_pts, waiver=None, _bye=False) -> float:
     """
     Projected starting-lineup points, where any starter slot we cannot fill is
     charged at replacement level. This is what makes the policy understand
@@ -143,9 +149,20 @@ def lineup_with_replacement(players, repl_pts, waiver=None) -> float:
             total += p.proj
             used.add(id(p))
         total += (n - len(got)) * empty.get(pos, 0.0)
-    flex = [p for p in players if p.pos in FLEX_ELIGIBLE and id(p) not in used]
-    total += max((p.proj for p in flex), default=max(
-        empty.get("RB", 0.0), empty.get("WR", 0.0)))
+    flex_best, flex_p = None, None
+    for p in players:
+        if p.pos in FLEX_ELIGIBLE and id(p) not in used:
+            if flex_best is None or p.proj > flex_best:
+                flex_best, flex_p = p.proj, p
+    if flex_best is None:
+        total += max(empty.get("RB", 0.0), empty.get("WR", 0.0))
+    else:
+        total += flex_best
+    if _bye:
+        starters = [p for p in players if id(p) in used]
+        if flex_p is not None:
+            starters.append(flex_p)
+        total -= _bye_cost(starters)
     return total
 
 
@@ -155,18 +172,31 @@ def lineup_with_replacement(players, repl_pts, waiver=None) -> float:
 BYE_COLLISION_COST = 7.0
 
 
-def bye_penalty(players) -> float:
-    """Points lost to starters sharing a bye. Only collisions beyond the first
-    player in a given week count — one player on bye is unavoidable."""
-    if not players:
-        return 0.0
-    _, starters = optimal_lineup(players)
+def _bye_cost(starters) -> float:
+    """Collision cost for a starter list that has already been computed, so the
+    lineup pass is not repeated just to count byes."""
     weeks: dict[int, int] = {}
     for p in starters:
         if p.pos in ("K", "D/ST") or not p.bye:
             continue
         weeks[p.bye] = weeks.get(p.bye, 0) + 1
-    return BYE_COLLISION_COST * sum(max(0, n - 1) for n in weeks.values())
+    extra = 0
+    for c in weeks.values():
+        if c > 1:
+            extra += c - 1
+    return BYE_COLLISION_COST * extra
+
+
+def bye_penalty(players) -> float:
+    """Points lost to starters sharing a bye. Only collisions beyond the first
+    player in a given week count — one player on bye is unavoidable."""
+    if not players:
+        return 0.0
+    return _bye_cost(optimal_lineup(players)[1])
+
+
+def _score_with_byes(players, repl_pts, waiver):
+    return lineup_with_replacement(players, repl_pts, waiver, _bye=True)
 
 
 # Weight on raw VOR, which keeps late picks sensible once the lineup is full
@@ -176,23 +206,24 @@ DEPTH_WEIGHT = 0.22
 
 
 def marginal_value(roster, cand, repl_pts, waiver=None) -> float:
-    base = (lineup_with_replacement(roster.players, repl_pts, waiver)
-            - bye_penalty(roster.players))
-    after = (lineup_with_replacement(roster.players + [cand], repl_pts, waiver)
-             - bye_penalty(roster.players + [cand]))
+    # one optimal_lineup pass per side: the bye cost is derived from the same
+    # starter list rather than recomputing the lineup a second time
+    base = _score_with_byes(roster.players, repl_pts, waiver)
+    after = _score_with_byes(roster.players + [cand], repl_pts, waiver)
     # Bench depth only pays at flex-eligible positions. A backup QB, K or D/ST
     # is a wasted bench spot in a 10-team league -- waiver QBs project ~220.
     depth = DEPTH_WEIGHT if cand.pos in FLEX_ELIGIBLE else 0.0
     return (after - base) + depth * max(0.0, getattr(cand, "vor", 0.0))
 
 
-def greedy_pick(available, roster, pick_no, repl_pts=None, waiver=None):
+def greedy_pick(available, roster, pick_no, repl_pts=None, waiver=None, used=None):
     """Our policy inside rollouts: best marginal lineup gain that fits a need."""
     rd = (pick_no - 1) // N_TEAMS + 1
     needs = roster.needs(rd)
-    cands = _eligible(available, needs, None, horizon=OUR_HORIZON)
+    cands = _eligible(available, needs, used, horizon=OUR_HORIZON)
     if not cands:
-        cands = [(p, 1.0) for p in available[:OUR_HORIZON]]
+        cands = [(p, 1.0) for p in available
+                 if not used or id(p) not in used][:OUR_HORIZON]
     cands = sorted(cands, key=lambda t: -getattr(t[0], "vor", -999))[:22]
     if repl_pts is None:
         return max(cands, key=lambda t: getattr(t[0], "vor", -999))[0]
@@ -210,15 +241,15 @@ def run_draft(pool, my_slot, rng, my_policy=None, forced=None,
     for pick_no in range(1, n_teams * ROSTER_SIZE + 1):
         slot = slot_for_pick(pick_no, n_teams)
         roster = rosters[slot]
-        pool_now = [p for p in available if id(p) not in taken]
-        if not pool_now:
+        if len(taken) >= len(available):
             break
         if slot == my_slot:
-            pick = forced.get(pick_no) or (my_policy or greedy_pick)(pool_now, roster, pick_no, repl_pts, waiver)
+            pick = forced.get(pick_no) or (my_policy or greedy_pick)(
+                available, roster, pick_no, repl_pts, waiver, used=taken)
             if id(pick) in taken:
-                pick = greedy_pick(pool_now, roster, pick_no, repl_pts, waiver)
+                pick = greedy_pick(available, roster, pick_no, repl_pts, waiver, used=taken)
         else:
-            pick = opponent_pick(pool_now, roster, pick_no, rng)
+            pick = opponent_pick(available, roster, pick_no, rng, used=taken)
         taken.add(id(pick))
         roster.players.append(pick)
     return rosters
@@ -272,10 +303,9 @@ def availability_at_pick(pool, my_slot, pick_no, n_sims=200, seed=None, top_n=25
         taken = set()
         for pk in range(1, pick_no):
             slot = slot_for_pick(pk, N_TEAMS)
-            now = [p for p in available if id(p) not in taken]
-            if not now:
+            if len(taken) >= len(available):
                 break
-            pick = opponent_pick(now, rosters[slot], pk, rng)
+            pick = opponent_pick(available, rosters[slot], pk, rng, used=taken)
             taken.add(id(pick))
             rosters[slot].players.append(pick)
         gone = {p.name for p in pool if id(p) in taken}
@@ -291,8 +321,16 @@ def availability_at_pick(pool, my_slot, pick_no, n_sims=200, seed=None, top_n=25
 
 
 # --------------------------------------------------------------- live draft
+# Rollouts stop here. Rounds past this are kickers, defences and deep bench —
+# they barely move the starting lineup, but they are the SLOWEST picks to
+# simulate because most of the board is gone and the eligibility scan has to
+# skip further each time. Unfilled slots are charged at waiver level instead.
+ROLLOUT_ROUNDS = 11
+
+
 def recommend(pool, my_slot, taken_names, repl_pts, waiver, my_roster_names=None,
-              pick_no=None, n_sims=120, top_k=8, seed=None, cover_positions=False):
+              pick_no=None, n_sims=120, top_k=8, seed=None, cover_positions=False,
+              depth_rounds=ROLLOUT_ROUNDS):
     """
     The draft-day call. For each plausible candidate on the board, force it as
     our pick and roll the rest of the draft out `n_sims` times, then report the
@@ -336,21 +374,23 @@ def recommend(pool, my_slot, taken_names, repl_pts, waiver, my_roster_names=None
             r = Roster(my_slot, list(my_players) + [cand])
             others = {s: Roster(s) for s in range(1, N_TEAMS + 1) if s != my_slot}
             used = set()
-            for pk in range(pick_no + 1, N_TEAMS * ROSTER_SIZE + 1):
+            last_pick = min(N_TEAMS * ROSTER_SIZE, depth_rounds * N_TEAMS)
+            for pk in range(pick_no + 1, last_pick + 1):
                 slot = slot_for_pick(pk, N_TEAMS)
-                now = [p for p in avail if id(p) not in used]
-                if not now:
+                if len(used) >= len(avail):
                     break
                 if slot == my_slot:
                     if len(r.players) >= ROSTER_SIZE:
                         continue
-                    pick = greedy_pick(now, r, pk, repl_pts, waiver)
+                    pick = greedy_pick(avail, r, pk, repl_pts, waiver, used=used)
                     r.players.append(pick)
                 else:
-                    pick = opponent_pick(now, others[slot], pk, rng)
+                    pick = opponent_pick(avail, others[slot], pk, rng, used=used)
                     others[slot].players.append(pick)
                 used.add(id(pick))
-            totals.append(optimal_lineup(r.players)[0])
+            # score with waiver-level fill for anything the truncated rollout
+            # did not reach, so a short rollout is not silently penalised
+            totals.append(lineup_with_replacement(r.players, repl_pts, waiver, _bye=True))
         totals.sort()
         n = len(totals)
         results.append({

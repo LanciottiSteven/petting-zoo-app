@@ -271,6 +271,28 @@ if adv:
         [("Pos", 0), ("Best available", 0), ("Season pts", 1), ("vs best", 1),
          ("Falls by", 1), ("Slots needed", 1), ("Left over repl.", 1),
          ("Survives", 1)], frows)
+    if adv.get("opportunity"):
+        orows = []
+        for d in adv["opportunity"][:3]:
+            win = "a" if d["edge"] > 0 else "b"
+            lose = "b" if win == "a" else "a"
+            orows.append(([
+                ui.td(f'{ui.pill(d[win+"_pos"])} <b>{d[win]}</b> now'
+                      f'<div class="dim" style="font-size:11px">{d[win+"_proj"]:.0f} pts</div>'),
+                ui.td(f'then best {d[lose+"_pos"]} next turn'
+                      f'<div class="dim" style="font-size:11px">~{d[lose+"_later"]:.0f} pts</div>'),
+                ui.td(f'<b>{max(d["path_a"], d["path_b"]):.0f}</b>', "num"),
+                ui.td(f'{ui.pill(d[lose+"_pos"])} {d[lose]} first'
+                      f'<div class="dim" style="font-size:11px">'
+                      f'then ~{d[win+"_later"]:.0f} at {d[win+"_pos"]}</div>'),
+                ui.td(f'{min(d["path_a"], d["path_b"]):.0f}', "num"),
+                ui.td(f'<span class="good">+{abs(d["edge"]):.0f}</span>'
+                      if abs(d["edge"]) >= 2 else '<span class="dim">even</span>', "num"),
+            ], False))
+        body += '<div class="pz-h">Opportunity cost — same two picks, which order</div>' + ui.table(
+            [("Take now", 0), ("Then next turn", 0), ("Two-pick total", 1),
+             ("Reverse order", 0), ("Total", 1), ("Edge", 1)], orows)
+
     if adv["alternatives"]:
         arows = [([ui.td(f"<b>{a['name']}</b>{ui.flag_html(a.get('flag'))}"),
                    ui.td(ui.pill(a["pos"])),
@@ -281,6 +303,9 @@ if adv:
         body += '<div class="pz-h">Also consider</div>' + ui.table(
             [("Player", 0), ("Pos", 0), ("Proj", 1), ("Cost", 1), ("Why it is on the list", 0)], arows)
     H(ui.card("Draft agent", body,
+              "<b>Opportunity cost</b> answers the question that matters: if you take the "
+              "receiver now, what back is actually left when you pick again? It plays both "
+              "orders and compares the two-pick total. "
               "<b>Slots needed</b> is how many starter slots at that position are still "
               "empty across the teams picking before your next turn — that is what "
               "actually causes a run. <b>Falls by</b> is how far the best player there "
