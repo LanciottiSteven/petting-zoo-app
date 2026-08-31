@@ -59,6 +59,13 @@ class Player:
     team: str
     bye: int | None = None
 
+    # ESPN's own published pre-draft rank — the order everyone else in the
+    # league sees on their board. Kept separate from our VOR ranking so both
+    # views are available: theirs for "who is on the clock next", ours for
+    # "who is actually worth the pick".
+    espn_rank: int | None = None
+    espn_rank_pos: int | None = None
+
     proj_espn: float | None = None
     proj_sleeper: float | None = None
     proj: float = 0.0            # blended
@@ -132,10 +139,36 @@ def build_pool(force: bool = False) -> list[Player]:
             p.games_2025 = int(act["stats"].get("210", 0) or 0)
         players.append(p)
 
+    _merge_espn_rankings(players)
     _merge_sleeper(players, force=force)
     _merge_ffc(players, force=force)
     _finalize(players)
     return players
+
+
+RANKINGS_FILE = S.DATA_DIR / "espn_rankings.json"
+
+
+def _merge_espn_rankings(players: list[Player]) -> None:
+    """ESPN's published pre-draft ranking, parsed from the league's own export."""
+    import json
+    if not RANKINGS_FILE.exists():
+        return
+    try:
+        rows = json.loads(RANKINGS_FILE.read_text())
+    except Exception:
+        return
+    idx = {norm_name(r["name"]): r for r in rows}
+    for p in players:
+        r = idx.get(norm_name(p.name))
+        if r:
+            p.espn_rank = r["espn_rank"]
+    # positional rank within ESPN's order (RB1, WR2 ... as ESPN shows them)
+    for pos in ("QB", "RB", "WR", "TE", "K", "D/ST"):
+        ranked = sorted([p for p in players if p.pos == pos and p.espn_rank],
+                        key=lambda p: p.espn_rank)
+        for i, p in enumerate(ranked, 1):
+            p.espn_rank_pos = i
 
 
 def _merge_sleeper(players: list[Player], force: bool = False) -> None:

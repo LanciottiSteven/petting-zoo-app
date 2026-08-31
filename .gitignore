@@ -5,6 +5,8 @@ data/*
 # ...except the variance model: 1.5KB, but rebuilding it needs 32MB of
 # historical game logs. Committing it makes a cold boot fast.
 !data/variance_model.json
+# ESPN's published pre-draft ranking, parsed from the league export
+!data/espn_rankings.json
 
 # the league badge ships with the app
 !pettingzoo/web/assets/

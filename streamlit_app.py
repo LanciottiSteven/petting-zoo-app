@@ -209,16 +209,18 @@ if not live.started:
                   f"{plan['spread'][1]:.0f}) · roster {shape}. <b>Avail</b> is how often that "
                   f"player was still there at that pick — under 40% means plan on the backup."))
 
-    top = ranked[:12]
-    rows = [([ui.td(f"{i}"), ui.td(f"<b>{p.name}</b>{ui.flag_html(p.flag, p.games_missed)}"),
-              ui.td(ui.pill(p.pos, str(p.pos_rank))), ui.td(f"{p.proj:.0f}", "num"),
-              ui.td(f"{p.vor:.0f}", "num"),
+    top = sorted([p for p in pool if p.espn_rank], key=lambda p: p.espn_rank)[:12]
+    rows = [([ui.td(f'<span class="tag">{p.espn_rank}</span>'),
+              ui.td(f"<b>{p.name}</b>{ui.flag_html(p.flag, p.games_missed)}"),
+              ui.td(ui.pill(p.pos, str(p.espn_rank_pos or ''))),
+              ui.td(f"{p.proj:.0f}", "num"), ui.td(f"{p.vor:.0f}", "num"),
               ui.td("—" if p.adp > 900 else f"{p.adp:.1f}", "num")], False)
-             for i, p in enumerate(top, 1)]
-    H(ui.card("Board preview — best available by value over replacement",
-              ui.table([("#", 0), ("Player", 0), ("Pos", 0), ("Proj", 1), ("VOR", 1), ("ADP", 1)], rows),
-              "Set your slot on the left, then hit Initiate Draft. The agent starts "
-              "advising from your first pick."))
+             for p in top]
+    H(ui.card("Board preview — ESPN's published pre-draft ranking",
+              ui.table([("ESPN", 0), ("Player", 0), ("Pos", 0), ("Proj", 1), ("VOR", 1), ("ADP", 1)], rows),
+              "This is the order your leaguemates see. <b>VOR</b> is this app's own "
+              "valuation and will disagree in places — that disagreement is where the "
+              "value is. Set your slot on the left, then hit Initiate Draft."))
     st.stop()
 
 
@@ -316,11 +318,15 @@ if adv:
 left, right = st.columns([2.15, 1])
 
 with left:
-    f1, f2, f3 = st.columns([2, 2, 1.4])
+    f1, f2, f0, f3 = st.columns([2, 1.7, 1.5, 1.6])
     q = f1.text_input("Search", placeholder="Search player…", label_visibility="collapsed",
                       key="w_q")
     posf = f2.multiselect("Position", ["QB", "RB", "WR", "TE", "K", "D/ST"],
                           placeholder="All positions", label_visibility="collapsed", key="w_pos")
+    order = f0.selectbox("Order", ["ESPN rank", "Our value (VOR)"],
+                         label_visibility="collapsed", key="w_order",
+                         help="ESPN rank is the board everyone else in your league is "
+                              "looking at. VOR is this app's own valuation.")
     assign = f3.selectbox("Assign 'Taken' to",
                           ["On the clock"] + [f"Seat {s} — {live.name_for(s)}"
                                               for s in range(1, N_TEAMS + 1) if s != live.my_slot],
@@ -328,7 +334,10 @@ with left:
     ss.assign_to_slot = None if assign == "On the clock" else int(assign.split()[1])
 
     qn = norm_name(q) if q else ""
-    avail = [p for p in ranked
+    pool_sorted = (sorted([p for p in pool if p.proj > 0 or p.espn_rank],
+                          key=lambda p: (p.espn_rank is None, p.espn_rank or 9999))
+                   if order == "ESPN rank" else ranked)
+    avail = [p for p in pool_sorted
              if norm_name(p.name) not in taken_norm
              and (not posf or p.pos in posf)
              and (not qn or qn in norm_name(p.name))][:70]
@@ -336,7 +345,10 @@ with left:
 
     df = pd.DataFrame([{
         "Mine": "＋ Mine", "Taken": "✕ Taken", "Info": "🔍",
-        "Player": p.name, "Pos": f"{p.pos}{p.pos_rank}", "Tier": p.tier,
+        "ESPN": p.espn_rank,
+        "Player": p.name,
+        # ESPN's own positional rank, so the board reads the same as theirs
+        "Pos": f"{p.pos}{p.espn_rank_pos}" if p.espn_rank_pos else p.pos,
         "Proj": p.proj, "VOR": p.vor,
         "ADP": None if p.adp > 900 else p.adp, "Bye": p.bye,
         "2025": p.actual_2025, "Flag": p.flag or "",
@@ -355,9 +367,11 @@ with left:
             "Info": st.column_config.ButtonColumn(
                 "", width="small", type="tertiary", on_click=on_info, key="click_info",
                 help="Show research, 2025 game log and sources"),
+            "ESPN": st.column_config.NumberColumn(
+                "ESPN", width="small", format="%d",
+                help="ESPN's published pre-draft rank — what your leaguemates see"),
             "Player": st.column_config.TextColumn(width="medium"),
             "Pos": st.column_config.TextColumn(width="small"),
-            "Tier": st.column_config.NumberColumn(width="small"),
             "Proj": st.column_config.NumberColumn(format="%.1f", width="small"),
             "VOR": st.column_config.NumberColumn(format="%.1f", width="small"),
             "ADP": st.column_config.NumberColumn(format="%.1f", width="small"),
@@ -365,13 +379,14 @@ with left:
             "2025": st.column_config.NumberColumn(format="%.0f", width="small"),
             "Flag": st.column_config.TextColumn(width="small"),
         })
-    rows_sel = (sel.selection.rows if hasattr(sel, "selection") else []) or []
-    if rows_sel and not ss.get("selected"):
-        ss.selected = ss.board_view[rows_sel[0]] if rows_sel[0] < len(ss.board_view) else None
+    # NOTE: deliberately not reading sel.selection here. st.dataframe keeps its
+    # row selection across reruns, so once any row had been clicked it kept
+    # re-selecting that INDEX — and after a pick shifts the board, that index
+    # points at a different player. The 🔍 button is the only way in.
     H('<div class="pz-hint"><b>＋ Mine</b> adds to your roster. <b>✕ Taken</b> assigns the '
       'player to whoever is on the clock — use the dropdown above to attribute it to a '
       'different seat. <b>🔍</b> opens that player\'s research, 2025 game log and sources '
-      'below the board.</div>')
+      'in a pop-up.</div>')
 
 with right:
     if my_players:
@@ -408,59 +423,63 @@ with right:
         [("Team", 0), ("N", 1), ("Roster shape", 0), ("Needs", 0)], lrows),
         "Who still needs what drives the agent's <b>Teams needing</b> column."))
 
-# ---- research ------------------------------------------------------------
+# ---- research (modal) ---------------------------------------------------
+@st.dialog("Player research", width="large")
+def _research_dialog(name: str):
+    p = by_name.get(norm_name(name))
+    if not p:
+        st.write("Player not found.")
+        return
+    d = dossier(p, repl)
+    head = (f'<div class="pz-why"><div style="font-size:16px;margin-bottom:6px">'
+            f'<b>{p.name}</b> &nbsp;{ui.pill(p.pos, str(p.pos_rank))} '
+            f'<span class="dim">{p.team} · bye {p.bye or "—"}</span>'
+            f'{ui.flag_html(p.flag, p.games_missed)}</div>')
+    for line in summary_lines(p, repl):
+        head += f"<div>{ui.md(line)}</div>"
+    head += "</div>"
+
+    blocks = []
+    for title, rowset in d["blocks"]:
+        rows = [([ui.td(lab, "wrap-label"),
+                  ui.td(f'{val}<div class="tag" style="margin-top:2px">'
+                        f'{d["sources"][src][0]}</div>', "num")], False)
+                for lab, val, src in rowset]
+        blocks.append(f'<div class="pz-h" style="margin-top:0">{title}</div>'
+                      + ui.table([("", 0), ("Value / source", 1)], rows))
+    H(head + ui.cols(blocks, min_px=340))
+
+    if d["game_log"]:
+        grows = [([ui.td(f'<span class="tag">W{x["week"]}</span>'),
+                   ui.td(f'<span class="dim">{x["opp"] or ""}</span>'),
+                   ui.td(f'{x["pts"]:.1f}', "num"),
+                   ui.td(f'{x["targets"]:.0f}' if x["targets"] else "", "num"),
+                   ui.td(f'{x["carries"]:.0f}' if x["carries"] else "", "num"),
+                   ui.td(f'{x["rec_yds"]+x["rush_yds"]+x["pass_yds"]:.0f}', "num"),
+                   ui.td(f'{x["tds"]:.0f}' if x["tds"] else "", "num")], x["pts"] >= 20)
+                 for x in d["game_log"]]
+        H('<div class="pz-h">2025 game by game '
+          '<span class="dim" style="text-transform:none;letter-spacing:0">'
+          '— highlighted rows are 20+ point weeks · source: nflverse game logs'
+          '</span></div>' + ui.table(
+            [("Wk", 0), ("Opp", 0), ("Pts", 1), ("Tgt", 1), ("Car", 1), ("Yds", 1), ("TD", 1)],
+            grows, scroll=True))
+
+    H('<div class="pz-hint">Every row names the feed it came from. Projections are '
+      'vendor numbers rescored under your league rules; the 2025 figures are measured '
+      'from actual game logs.</div>')
+
+    a1, a2 = st.columns(2)
+    if a1.button(f"＋ Draft {p.name}", type="primary", use_container_width=True,
+                 key="dlg_take_me"):
+        live.add(p.name, live.my_slot); ss.selected = None; st.rerun()
+    if a2.button("✕ Taken by another", use_container_width=True, key="dlg_take_other"):
+        slot = ss.get("assign_to_slot") or live.on_the_clock
+        if slot == live.my_slot:
+            slot = next((x for x in range(1, N_TEAMS + 1) if x != live.my_slot), 1)
+        live.add(p.name, slot); ss.selected = None; st.rerun()
+
+
 if ss.selected:
-    p = by_name.get(norm_name(ss.selected))
-    if p:
-        d = dossier(p, repl)
-        head = (f'<div class="pz-why"><div style="font-size:16px;margin-bottom:6px">'
-                f'<b>{p.name}</b> &nbsp;{ui.pill(p.pos, str(p.pos_rank))} '
-                f'<span class="dim">{p.team} · bye {p.bye or "—"}</span>'
-                f'{ui.flag_html(p.flag, p.games_missed)}</div>')
-        for s in summary_lines(p, repl):
-            head += f"<div>{ui.md(s)}</div>"
-        head += "</div>"
-
-        blocks = []
-        for title, rowset in d["blocks"]:
-            # Two columns, with the source stacked under the value. A third
-            # column for the source does not fit inside a grid track and gets
-            # clipped off the right edge.
-            rows = [([ui.td(lab, "wrap-label"),
-                      ui.td(f'{val}<div class="tag" style="margin-top:2px">'
-                            f'{d["sources"][src][0]}</div>', "num")], False)
-                    for lab, val, src in rowset]
-            blocks.append(f'<div class="pz-h" style="margin-top:0">{title}</div>'
-                          + ui.table([("", 0), ("Value / source", 1)], rows))
-        body = head + ui.cols(blocks, min_px=300)
-
-        if d["game_log"]:
-            g = d["game_log"]
-            grows = [([ui.td(f'<span class="tag">W{x["week"]}</span>'),
-                       ui.td(f'<span class="dim">{x["opp"] or ""}</span>'),
-                       ui.td(f'{x["pts"]:.1f}', "num"),
-                       ui.td(f'{x["targets"]:.0f}' if x["targets"] else "", "num"),
-                       ui.td(f'{x["carries"]:.0f}' if x["carries"] else "", "num"),
-                       ui.td(f'{x["rec_yds"]+x["rush_yds"]+x["pass_yds"]:.0f}', "num"),
-                       ui.td(f'{x["tds"]:.0f}' if x["tds"] else "", "num")], x["pts"] >= 20)
-                     for x in g]
-            body += ('<div class="pz-h">2025 game by game '
-                     '<span class="dim" style="text-transform:none;letter-spacing:0">'
-                     '— highlighted rows are 20+ point weeks · source: nflverse game logs'
-                     '</span></div>' + ui.table(
-                [("Wk", 0), ("Opp", 0), ("Pts", 1), ("Tgt", 1), ("Car", 1), ("Yds", 1), ("TD", 1)],
-                grows, scroll=True))
-
-        H(ui.card(f"Research — {p.name}", body,
-                  "Every row names the feed it came from. Nothing here is an opinion: "
-                  "projections are vendor numbers rescored under your league's rules, and "
-                  "the 2025 figures are measured from actual game logs."))
-
-        a1, a2, a3 = st.columns([1, 1, 3])
-        if a1.button(f"＋ Draft {p.name}", type="primary", use_container_width=True, key="w_take_me"):
-            live.add(p.name, live.my_slot); ss.selected = None; st.rerun()
-        if a2.button("✕ Taken by another", use_container_width=True, key="w_take_other"):
-            slot = ss.get("assign_to_slot") or live.on_the_clock
-            if slot == live.my_slot:
-                slot = next((s for s in range(1, N_TEAMS + 1) if s != live.my_slot), 1)
-            live.add(p.name, slot); ss.selected = None; st.rerun()
+    _research_dialog(ss.selected)
+    ss.selected = None      # one showing per click; reopen with 🔍
